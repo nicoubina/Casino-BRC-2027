@@ -353,11 +353,16 @@ function renderMarkets() {
 
 function renderMarketCard(market) {
   const options = market.opciones || [];
-  const marketBets = state.bets.filter(
-    (bet) => String(bet.mercado_id) === String(market.id),
+  const activeMarketBets = state.bets.filter(
+    (bet) =>
+      String(bet.mercado_id) === String(market.id) &&
+      bet.estado === "Abierta",
   );
-  const lockedSides = new Set(marketBets.map((bet) => bet.lado).filter(Boolean));
-  const fullyLocked = market.tipo !== "OVER_UNDER" && marketBets.length > 0;
+  const lockedSides = new Set(
+    activeMarketBets.map((bet) => bet.lado).filter(Boolean),
+  );
+  const fullyLocked =
+    market.tipo !== "OVER_UNDER" && activeMarketBets.length > 0;
   const isOpen = market.estado === "Abierto";
   const selectedId = String(state.selectedOptions[market.id] || "");
 
