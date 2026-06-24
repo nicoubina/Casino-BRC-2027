@@ -76,6 +76,7 @@ function routeRequest_(payload) {
       getUserData: getUserData_,
       getMarkets: getMarkets_,
       placeBet: placeBet_,
+      cancelBet: cancelBet_,
       getMyBets: getMyBets_,
       getRankingSaldo: getBalanceRanking_,
       getRankingGanancias: getWinningsRanking_,
@@ -257,7 +258,8 @@ function placeBet_(payload) {
     const userMarketBets = bets.filter(function (bet) {
       return (
         normalizeKey_(bet.usuario) === normalizeKey_(username) &&
-        String(bet.mercado_id) === String(marketId)
+        String(bet.mercado_id) === String(marketId) &&
+        String(bet.estado) === "Abierta"
       );
     });
 
@@ -320,6 +322,71 @@ function placeBet_(payload) {
         saldo: newBalance,
       },
       message: "Apuesta registrada correctamente.",
+    };
+  });
+}
+
+function cancelBet_(payload) {
+  return withScriptLock_(function () {
+    const username = validateUsername_(payload.usuario);
+    const betId = requiredId_(payload.apuesta_id, "apuesta");
+
+    const usersSheet = getSheet_(SHEETS.USERS);
+    const users = getRowsAsObjects_(usersSheet);
+    const markets = getRowsAsObjects_(getSheet_(SHEETS.MARKETS));
+    const betsSheet = getSheet_(SHEETS.BETS);
+    const bets = getRowsAsObjects_(betsSheet);
+
+    const bet = bets.find(function (item) {
+      return String(item.id) === String(betId);
+    });
+    if (!bet) throw new Error("La apuesta no existe.");
+    if (normalizeKey_(bet.usuario) !== normalizeKey_(username)) {
+      throw new Error("La apuesta no pertenece al usuario.");
+    }
+    if (String(bet.estado) !== "Abierta") {
+      throw new Error("Solo se pueden cancelar apuestas abiertas.");
+    }
+
+    const market = markets.find(function (item) {
+      return String(item.id) === String(bet.mercado_id);
+    });
+    if (!market) throw new Error("El mercado asociado no existe.");
+    if (String(market.estado) !== "Abierto") {
+      throw new Error("La apuesta no se puede cancelar porque el mercado ya no está abierto.");
+    }
+
+    const user = findUser_(users, username);
+    if (!user) throw new Error("Usuario no encontrado.");
+
+    const amount = positiveNumber_(bet.monto, "El monto de la apuesta");
+    const newBalance = roundNumber_(number_(user.saldo) + amount);
+    const now = new Date();
+
+    usersSheet
+      .getRange(user._row, headerIndex_(usersSheet, "saldo"))
+      .setValue(newBalance);
+    betsSheet
+      .getRange(bet._row, headerIndex_(betsSheet, "estado"))
+      .setValue("Devuelta");
+    betsSheet
+      .getRange(bet._row, headerIndex_(betsSheet, "pago"))
+      .setValue(amount);
+
+    appendMovement_(
+      username,
+      "Devolucion",
+      amount,
+      "Cancelación de apuesta en " + market.evento + " · " + bet.opcion,
+      now,
+    );
+
+    return {
+      data: {
+        saldo: newBalance,
+        apuesta_id: betId,
+      },
+      message: "Apuesta cancelada y fichas devueltas.",
     };
   });
 }

@@ -116,6 +116,7 @@ function bindEvents() {
   elements.categoryFilter.addEventListener("change", renderMarkets);
   elements.statusFilter.addEventListener("change", renderMarkets);
   elements.marketsContainer.addEventListener("click", handleMarketClick);
+  elements.betsContainer.addEventListener("click", handleBetClick);
 
   elements.betFilters.addEventListener("click", (event) => {
     const button = event.target.closest("[data-bet-status]");
@@ -593,6 +594,11 @@ function renderBets() {
   elements.betsContainer.innerHTML = filtered
     .map((bet) => {
       const potentialPayment = Number(bet.monto) * Number(bet.cuota);
+      const market = state.markets.find(
+        (item) => String(item.id) === String(bet.mercado_id),
+      );
+      const canCancel =
+        bet.estado === "Abierta" && market && market.estado === "Abierto";
       return `
         <article class="bet-card">
           <div class="bet-card-title">
@@ -611,11 +617,50 @@ function renderBets() {
             <span>Pago potencial</span>
             <strong>${formatChips(potentialPayment)}</strong>
           </div>
-          <span class="bet-status bet-status-${slugify(bet.estado)}">${escapeHtml(bet.estado)}</span>
+          <div class="bet-card-actions">
+            <span class="bet-status bet-status-${slugify(bet.estado)}">${escapeHtml(bet.estado)}</span>
+            ${
+              canCancel
+                ? `
+                  <button
+                    class="button button-danger button-small"
+                    type="button"
+                    data-cancel-bet="${escapeHtml(bet.id)}"
+                  >
+                    Cancelar apuesta
+                  </button>
+                `
+                : ""
+            }
+          </div>
         </article>
       `;
     })
     .join("");
+}
+
+async function handleBetClick(event) {
+  const cancelButton = event.target.closest("[data-cancel-bet]");
+  if (!cancelButton) return;
+
+  const confirmed = window.confirm(
+    "¿Seguro que querés cancelar esta apuesta? Se te devolverán las fichas apostadas.",
+  );
+  if (!confirmed) return;
+
+  try {
+    setLoading(true);
+    const data = await callApi("cancelBet", {
+      usuario: state.user.usuario,
+      apuesta_id: cancelButton.dataset.cancelBet,
+    });
+    showToast(data.message || "Apuesta cancelada y fichas devueltas.", "success");
+    await refreshAll();
+  } catch (error) {
+    showToast(error.message, "error");
+  } finally {
+    setLoading(false);
+  }
 }
 
 function renderRankings() {

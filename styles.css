@@ -1015,6 +1015,16 @@ label {
   font-size: 0.9rem;
 }
 
+.bet-card-actions {
+  display: grid;
+  justify-items: end;
+  gap: 8px;
+}
+
+.bet-card-actions .button {
+  white-space: nowrap;
+}
+
 .ranking-grid,
 .admin-grid {
   display: grid;
@@ -1530,6 +1540,15 @@ label {
 
   .bet-card .bet-metric {
     display: none;
+  }
+
+  .bet-card-actions {
+    justify-items: end;
+  }
+
+  .bet-card-actions .button {
+    min-height: 34px;
+    padding: 7px 9px;
   }
 
   .panel-card {

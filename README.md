@@ -200,6 +200,7 @@ Acciones:
 - `getUserData`
 - `getMarkets`
 - `placeBet`
+- `cancelBet`
 - `getMyBets`
 - `getRankingSaldo`
 - `getRankingGanancias`
@@ -216,6 +217,8 @@ Acciones:
 ## Reglas implementadas
 
 - El saldo se descuenta al crear una apuesta.
+- Una apuesta abierta puede cancelarse mientras su mercado siga abierto; el monto se devuelve y la apuesta queda como `Devuelta`.
+- Una apuesta devuelta no bloquea una nueva apuesta en el mismo mercado.
 - Una cuota queda copiada en la apuesta: editar la cuota después no cambia apuestas anteriores.
 - `SI_NO` y `NOMBRE`: una apuesta total por usuario y mercado.
 - `OVER_UNDER`: como máximo una apuesta `Menos de` y una `Más de`.
