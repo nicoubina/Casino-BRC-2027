@@ -779,6 +779,28 @@ label {
   line-height: 1.35;
 }
 
+.cancel-deadline-badge {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  max-width: 100%;
+  margin-top: 10px;
+  border: 1px solid rgba(218, 182, 99, 0.2);
+  border-radius: 100px;
+  background: rgba(218, 182, 99, 0.065);
+  color: #d8c38d;
+  padding: 5px 9px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.cancel-deadline-badge.is-expired {
+  border-color: rgba(241, 110, 110, 0.22);
+  background: rgba(241, 110, 110, 0.07);
+  color: #f3aaaa;
+}
+
 .market-options {
   display: grid;
   gap: 8px;
@@ -1006,6 +1028,12 @@ label {
   font-size: 0.72rem;
 }
 
+.bet-card-title .cancel-deadline-badge {
+  display: flex;
+  margin-top: 8px;
+  white-space: normal;
+}
+
 .bet-metric span {
   display: block;
   margin-bottom: 4px;
@@ -1023,6 +1051,14 @@ label {
 
 .bet-card-actions .button {
   white-space: nowrap;
+}
+
+.cancel-disabled-reason {
+  max-width: 145px;
+  color: #d89898;
+  font-size: 0.66rem;
+  line-height: 1.35;
+  text-align: right;
 }
 
 .ranking-grid,
@@ -1247,6 +1283,16 @@ label {
 .admin-options {
   border-top: 1px solid var(--line);
   padding: 12px 16px 16px;
+}
+
+.admin-cancel-deadline-row {
+  display: grid;
+  grid-template-columns: minmax(210px, 1fr) auto;
+  align-items: end;
+  gap: 9px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 12px;
 }
 
 .admin-option-row {
@@ -1551,12 +1597,18 @@ label {
     padding: 7px 9px;
   }
 
+  .cancel-deadline-badge {
+    border-radius: 9px;
+    white-space: normal;
+  }
+
   .panel-card {
     padding: 17px;
   }
 
   .inline-form,
   .admin-market-summary,
+  .admin-cancel-deadline-row,
   .admin-option-row,
   .admin-resolution {
     grid-template-columns: 1fr;

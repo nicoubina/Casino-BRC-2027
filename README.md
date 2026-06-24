@@ -41,7 +41,7 @@ Si preferís crearlas manualmente, deben llamarse exactamente así:
 | --- | --- |
 | `Config` | `clave`, `valor` |
 | `Usuarios` | `id`, `usuario`, `saldo`, `rol`, `fecha_registro` |
-| `Mercados` | `id`, `categoria`, `evento`, `tipo`, `estado`, `fecha_creacion` |
+| `Mercados` | `id`, `categoria`, `evento`, `tipo`, `estado`, `fecha_creacion`, `fecha_limite_cancelacion` |
 | `Opciones` | `id`, `mercado_id`, `opcion`, `linea`, `lado`, `cuota` |
 | `Apuestas` | `id`, `usuario`, `mercado_id`, `opcion_id`, `opcion`, `tipo_mercado`, `lado`, `linea`, `monto`, `cuota`, `estado`, `pago`, `fecha` |
 | `Resultados` | `mercado_id`, `resultado`, `opcion_id_ganadora`, `fecha_resolucion` |
@@ -66,6 +66,9 @@ Si preferís crearlas manualmente, deben llamarse exactamente así:
 8. Cuando termine, la función devuelve un objeto con la URL de la planilla y los conteos cargados.
 
 `setupCasino()` es idempotente para la carga inicial: crea hojas faltantes, pero no duplica mercados u opciones si esas hojas ya contienen datos.
+También agrega de forma segura la columna opcional `fecha_limite_cancelacion` a instalaciones existentes, sin borrar ni reinicializar mercados.
+
+Para que los horarios coincidan con la interfaz, verificá que la zona horaria del proyecto de Apps Script y de la Google Sheet sea `America/Argentina/Buenos_Aires`.
 
 Documentación oficial: [autorización de Apps Script](https://developers.google.com/apps-script/guides/services/authorization).
 
@@ -209,6 +212,7 @@ Acciones:
 - `adminCreateMarket`
 - `adminCreateOption`
 - `adminUpdateOdds`
+- `adminUpdateCancelDeadline`
 - `adminCloseMarket`
 - `adminResolveMarket`
 - `adminCancelMarket`
@@ -218,6 +222,8 @@ Acciones:
 
 - El saldo se descuenta al crear una apuesta.
 - Una apuesta abierta puede cancelarse mientras su mercado siga abierto; el monto se devuelve y la apuesta queda como `Devuelta`.
+- Si un mercado tiene `fecha_limite_cancelacion`, la cancelación solo se permite hasta esa fecha y hora inclusive.
+- El panel admin permite definir, modificar o borrar ese límite. Los mercados existentes quedan sin límite por defecto.
 - Una apuesta devuelta no bloquea una nueva apuesta en el mismo mercado.
 - Una cuota queda copiada en la apuesta: editar la cuota después no cambia apuestas anteriores.
 - `SI_NO` y `NOMBRE`: una apuesta total por usuario y mercado.
@@ -272,7 +278,7 @@ No hace falta pegarlos manualmente si ejecutás `setupCasino()`. Los bloques sig
 ### Hoja `Mercados`
 
 ```tsv
-id	categoria	evento	tipo	estado	fecha_creacion
+id	categoria	evento	tipo	estado	fecha_creacion	fecha_limite_cancelacion
 1	Wachineadas	¿Habrá una wachineada de Facu?	SI_NO	Abierto	2026-06-23
 2	Wachineadas	¿Habrá una wachineada de Nachón?	SI_NO	Abierto	2026-06-23
 3	Wachineadas	¿Habrá una wachineada de Dante?	SI_NO	Abierto	2026-06-23

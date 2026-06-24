@@ -22,7 +22,15 @@ const SHEETS = {
 const HEADERS = {
   Config: ["clave", "valor"],
   Usuarios: ["id", "usuario", "saldo", "rol", "fecha_registro"],
-  Mercados: ["id", "categoria", "evento", "tipo", "estado", "fecha_creacion"],
+  Mercados: [
+    "id",
+    "categoria",
+    "evento",
+    "tipo",
+    "estado",
+    "fecha_creacion",
+    "fecha_limite_cancelacion",
+  ],
   Opciones: ["id", "mercado_id", "opcion", "linea", "lado", "cuota"],
   Apuestas: [
     "id",
@@ -85,6 +93,7 @@ function routeRequest_(payload) {
       adminCreateMarket: adminCreateMarket_,
       adminCreateOption: adminCreateOption_,
       adminUpdateOdds: adminUpdateOdds_,
+      adminUpdateCancelDeadline: adminUpdateCancelDeadline_,
       adminCloseMarket: adminCloseMarket_,
       adminResolveMarket: adminResolveMarket_,
       adminCancelMarket: adminCancelMarket_,
@@ -210,6 +219,7 @@ function getMarkets_() {
         tipo: String(market.tipo),
         estado: String(market.estado),
         fecha_creacion: toIso_(market.fecha_creacion),
+        fecha_limite_cancelacion: toIso_(market.fecha_limite_cancelacion),
         opciones: optionsByMarket[String(market.id)] || [],
       };
     })
@@ -354,6 +364,13 @@ function cancelBet_(payload) {
     if (!market) throw new Error("El mercado asociado no existe.");
     if (String(market.estado) !== "Abierto") {
       throw new Error("La apuesta no se puede cancelar porque el mercado ya no está abierto.");
+    }
+    const cancelDeadline = optionalDate_(
+      market.fecha_limite_cancelacion,
+      "La fecha límite de cancelación",
+    );
+    if (cancelDeadline && new Date().getTime() > cancelDeadline.getTime()) {
+      throw new Error("Ya venció el plazo para cancelar esta apuesta.");
     }
 
     const user = findUser_(users, username);
@@ -512,7 +529,7 @@ function adminCreateMarket_(payload) {
     const sheet = getSheet_(SHEETS.MARKETS);
     const markets = getRowsAsObjects_(sheet);
     const id = nextId_(markets);
-    sheet.appendRow([id, category, event, type, "Abierto", new Date()]);
+    sheet.appendRow([id, category, event, type, "Abierto", new Date(), ""]);
     return {
       data: { market: { id: id, categoria: category, evento: event, tipo: type } },
       message: "Mercado creado correctamente.",
@@ -588,6 +605,39 @@ function adminUpdateOdds_(payload) {
       .getRange(option._row, headerIndex_(optionsSheet, "cuota"))
       .setValue(odds);
     return { message: "Cuota actualizada correctamente." };
+  });
+}
+
+function adminUpdateCancelDeadline_(payload) {
+  requireAdmin_(payload);
+  return withScriptLock_(function () {
+    const marketId = requiredId_(payload.mercado_id, "mercado");
+    const marketsSheet = getSheet_(SHEETS.MARKETS);
+    const market = requireMarket_(marketId, marketsSheet);
+    if (["Resuelto", "Cancelado"].includes(String(market.estado))) {
+      throw new Error(
+        "No se puede modificar el límite de cancelación de un mercado finalizado.",
+      );
+    }
+
+    const deadline = optionalDate_(
+      payload.fecha_limite_cancelacion,
+      "La fecha límite de cancelación",
+    );
+    marketsSheet
+      .getRange(
+        market._row,
+        headerIndex_(marketsSheet, "fecha_limite_cancelacion"),
+      )
+      .setValue(deadline || "");
+
+    return {
+      data: {
+        mercado_id: marketId,
+        fecha_limite_cancelacion: deadline ? deadline.toISOString() : "",
+      },
+      message: "Fecha límite de cancelación actualizada.",
+    };
   });
 }
 
@@ -808,6 +858,7 @@ function adminGetAllBets_(payload) {
  */
 function setupCasino() {
   const spreadsheet = getDatabase_();
+  migrateCasinoSchema_(spreadsheet);
   Object.keys(HEADERS).forEach(function (sheetName) {
     ensureSheet_(spreadsheet, sheetName, HEADERS[sheetName]);
   });
@@ -892,6 +943,7 @@ function seedMarketsAndOptions_() {
       definition.tipo,
       "Abierto",
       now,
+      "",
     ]);
     definition.opciones.forEach(function (option) {
       optionRows.push([
@@ -1380,7 +1432,34 @@ function getSheet_(name) {
       "Falta la hoja “" + name + "”. Ejecutá setupCasino() desde Apps Script.",
     );
   }
+  if (name === SHEETS.MARKETS) {
+    ensureOptionalColumns_(sheet, ["fecha_limite_cancelacion"]);
+  }
   return sheet;
+}
+
+function migrateCasinoSchema_(spreadsheet) {
+  const marketsSheet = spreadsheet.getSheetByName(SHEETS.MARKETS);
+  if (marketsSheet) {
+    ensureOptionalColumns_(marketsSheet, ["fecha_limite_cancelacion"]);
+  }
+}
+
+function ensureOptionalColumns_(sheet, columns) {
+  if (sheet.getLastRow() === 0) return;
+
+  const lastColumn = Math.max(sheet.getLastColumn(), 1);
+  const existingHeaders = sheet
+    .getRange(1, 1, 1, lastColumn)
+    .getValues()[0]
+    .map(String);
+
+  columns.forEach(function (column) {
+    if (existingHeaders.indexOf(column) !== -1) return;
+    const nextColumn = sheet.getLastColumn() + 1;
+    sheet.getRange(1, nextColumn).setValue(column);
+    existingHeaders.push(column);
+  });
 }
 
 function ensureSheet_(spreadsheet, name, headers) {
@@ -1564,6 +1643,17 @@ function finiteNumber_(value, label) {
     typeof value === "string" ? value.trim().replace(",", ".") : value;
   const parsed = Number(normalized);
   if (!Number.isFinite(parsed)) throw new Error(label + " debe ser un número válido.");
+  return parsed;
+}
+
+function optionalDate_(value, label) {
+  if (value === null || value === undefined || String(value).trim() === "") {
+    return null;
+  }
+  const parsed = value instanceof Date ? new Date(value.getTime()) : new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new Error(label + " debe ser una fecha válida.");
+  }
   return parsed;
 }
 

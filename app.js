@@ -353,6 +353,9 @@ function renderMarkets() {
 
 function renderMarketCard(market) {
   const options = market.opciones || [];
+  const cancelDeadlineBadge = renderCancelDeadlineBadge(
+    market.fecha_limite_cancelacion,
+  );
   const activeMarketBets = state.bets.filter(
     (bet) =>
       String(bet.mercado_id) === String(market.id) &&
@@ -402,6 +405,7 @@ function renderMarketCard(market) {
           <span class="status-badge status-${slugify(market.estado)}">${escapeHtml(market.estado)}</span>
         </div>
         <h4>${escapeHtml(market.evento)}</h4>
+        ${cancelDeadlineBadge}
       </div>
       <div class="market-options">
         ${optionMarkup}
@@ -602,13 +606,25 @@ function renderBets() {
       const market = state.markets.find(
         (item) => String(item.id) === String(bet.mercado_id),
       );
-      const canCancel =
+      const deadlineStatus = getCancelDeadlineStatus(
+        market?.fecha_limite_cancelacion,
+      );
+      const otherwiseCancelable =
         bet.estado === "Abierta" && market && market.estado === "Abierto";
+      const canCancel =
+        otherwiseCancelable &&
+        (!deadlineStatus.exists ||
+          (deadlineStatus.valid && !deadlineStatus.expired));
+      const deadlineBlocksCancellation =
+        otherwiseCancelable &&
+        deadlineStatus.exists &&
+        (!deadlineStatus.valid || deadlineStatus.expired);
       return `
         <article class="bet-card">
           <div class="bet-card-title">
             <strong>${escapeHtml(bet.evento || `Mercado #${bet.mercado_id}`)}</strong>
             <small>${escapeHtml(bet.opcion)} · ${formatDate(bet.fecha)}</small>
+            ${renderCancelDeadlineBadge(market?.fecha_limite_cancelacion)}
           </div>
           <div class="bet-metric">
             <span>Monto</span>
@@ -635,6 +651,19 @@ function renderBets() {
                     Cancelar apuesta
                   </button>
                 `
+                : deadlineBlocksCancellation
+                  ? `
+                    <button
+                      class="button button-danger button-small"
+                      type="button"
+                      disabled
+                    >
+                      Cancelar apuesta
+                    </button>
+                    <small class="cancel-disabled-reason">
+                      ${deadlineStatus.expired ? "Venció el plazo de cancelación" : "Fecha límite inválida"}
+                    </small>
+                  `
                 : ""
             }
           </div>
@@ -873,6 +902,25 @@ function renderAdminMarkets() {
             </div>
           </div>
           <div class="admin-options">
+            <div class="admin-cancel-deadline-row">
+              <label>
+                Límite para cancelar apuestas
+                <input
+                  type="datetime-local"
+                  value="${escapeHtml(formatDateTimeLocal(market.fecha_limite_cancelacion))}"
+                  data-admin-cancel-deadline-input="${escapeHtml(market.id)}"
+                  ${actionable ? "" : "disabled"}
+                />
+              </label>
+              <button
+                class="button button-secondary button-small"
+                type="button"
+                data-admin-update-cancel-deadline="${escapeHtml(market.id)}"
+                ${actionable ? "" : "disabled"}
+              >
+                Guardar límite de cancelación
+              </button>
+            </div>
             ${
               options.length
                 ? options
@@ -930,6 +978,25 @@ function renderAdminMarkets() {
 }
 
 async function handleAdminMarketClick(event) {
+  const deadlineButton = event.target.closest(
+    "[data-admin-update-cancel-deadline]",
+  );
+  if (deadlineButton) {
+    const marketId = deadlineButton.dataset.adminUpdateCancelDeadline;
+    const input = elements.adminMarketsContainer.querySelector(
+      `[data-admin-cancel-deadline-input="${cssEscape(marketId)}"]`,
+    );
+    await runAdminAction(
+      "adminUpdateCancelDeadline",
+      {
+        mercado_id: marketId,
+        fecha_limite_cancelacion: input.value,
+      },
+      "Fecha límite de cancelación actualizada.",
+    );
+    return;
+  }
+
   const updateButton = event.target.closest("[data-admin-update-odds]");
   if (updateButton) {
     const optionId = updateButton.dataset.adminUpdateOdds;
@@ -1158,6 +1225,63 @@ function formatDate(value) {
     dateStyle: "short",
     timeStyle: "short",
   }).format(date);
+}
+
+function formatCancelDeadline(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return new Intl.DateTimeFormat("es-AR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  })
+    .format(date)
+    .replace(",", "");
+}
+
+function formatDateTimeLocal(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const pad = (number) => String(number).padStart(2, "0");
+  return [
+    `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`,
+    `${pad(date.getHours())}:${pad(date.getMinutes())}`,
+  ].join("T");
+}
+
+function getCancelDeadlineStatus(value) {
+  if (value === null || value === undefined || String(value).trim() === "") {
+    return { exists: false, valid: true, expired: false, formatted: "" };
+  }
+  const date = new Date(value);
+  const valid = !Number.isNaN(date.getTime());
+  return {
+    exists: true,
+    valid,
+    expired: valid && Date.now() > date.getTime(),
+    formatted: valid ? formatCancelDeadline(date) : "",
+  };
+}
+
+function renderCancelDeadlineBadge(value) {
+  const status = getCancelDeadlineStatus(value);
+  if (!status.exists) return "";
+  if (!status.valid) {
+    return '<span class="cancel-deadline-badge is-expired">Fecha límite de cancelación inválida</span>';
+  }
+  const label = status.expired
+    ? "Plazo de cancelación vencido"
+    : "Cancelación disponible hasta";
+  return `
+    <span class="cancel-deadline-badge ${status.expired ? "is-expired" : ""}">
+      ${label}: ${escapeHtml(status.formatted)}
+    </span>
+  `;
 }
 
 function formatMarketType(type) {
