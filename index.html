@@ -1,0 +1,411 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="Casino social privado con fichas ficticias para el viaje BRC 2027."
+    />
+    <meta name="theme-color" content="#08110d" />
+    <title>CASINO BRC - ANTO CAPUTO</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="ambient ambient-one" aria-hidden="true"></div>
+    <div class="ambient ambient-two" aria-hidden="true"></div>
+
+    <div id="toast-region" class="toast-region" aria-live="polite"></div>
+
+    <main>
+      <section id="auth-view" class="auth-shell">
+        <div class="brand-panel">
+          <div class="brand-mark" aria-hidden="true">♠</div>
+          <p class="eyebrow">Bariloche · Edición 2027</p>
+          <h1>CASINO BRC<br /><span>ANTO CAPUTO</span></h1>
+          <p class="brand-copy">
+            Mercados internos, gloria discutible y fichas absolutamente ficticias.
+          </p>
+          <div class="fictional-badge">
+            <span aria-hidden="true">●</span>
+            Sin dinero real
+          </div>
+        </div>
+
+        <div class="auth-card">
+          <div class="auth-tabs" role="tablist" aria-label="Acceso">
+            <button
+              class="auth-tab is-active"
+              type="button"
+              role="tab"
+              aria-selected="true"
+              data-auth-tab="login"
+            >
+              Ingresar
+            </button>
+            <button
+              class="auth-tab"
+              type="button"
+              role="tab"
+              aria-selected="false"
+              data-auth-tab="register"
+            >
+              Registrarme
+            </button>
+          </div>
+
+          <form id="login-form" class="auth-form">
+            <div>
+              <p class="eyebrow">Bienvenido de nuevo</p>
+              <h2>Entrá a la mesa</h2>
+              <p class="muted">Usá el mismo nombre con el que te registraste.</p>
+            </div>
+            <label>
+              Nombre de usuario
+              <input
+                id="login-username"
+                name="usuario"
+                type="text"
+                autocomplete="username"
+                minlength="2"
+                maxlength="30"
+                placeholder="Ej: Juanpi"
+                required
+              />
+            </label>
+            <button class="button button-primary button-wide" type="submit">
+              Iniciar sesión
+            </button>
+          </form>
+
+          <form id="register-form" class="auth-form is-hidden">
+            <div>
+              <p class="eyebrow">Primera vez</p>
+              <h2>Creá tu cuenta</h2>
+              <p class="muted">Arrancás con 10.000 fichas, salvo que Nico cambie la configuración.</p>
+            </div>
+            <label>
+              Elegí un nombre único
+              <input
+                id="register-username"
+                name="usuario"
+                type="text"
+                autocomplete="username"
+                minlength="2"
+                maxlength="30"
+                placeholder="Ej: Facu"
+                required
+              />
+            </label>
+            <button class="button button-primary button-wide" type="submit">
+              Crear cuenta
+            </button>
+          </form>
+
+          <p class="auth-footnote">Tu sesión queda guardada únicamente en este dispositivo.</p>
+        </div>
+      </section>
+
+      <section id="app-view" class="app-shell is-hidden">
+        <header class="topbar">
+          <button class="mobile-menu-button" id="mobile-menu-button" type="button" aria-label="Abrir menú">
+            <span></span><span></span><span></span>
+          </button>
+          <a class="compact-brand" href="#mercados" aria-label="Ir a mercados">
+            <span class="compact-brand-mark">♠</span>
+            <span>CASINO BRC</span>
+          </a>
+          <div class="topbar-actions">
+            <div class="balance-pill">
+              <span class="balance-label">Saldo</span>
+              <strong id="header-balance">0</strong>
+              <span class="chip-label">fichas</span>
+            </div>
+            <button id="logout-button" class="button button-ghost button-small" type="button">Salir</button>
+          </div>
+        </header>
+
+        <aside id="sidebar" class="sidebar">
+          <div class="sidebar-profile">
+            <div id="user-avatar" class="avatar">N</div>
+            <div>
+              <span class="muted-label">Jugando como</span>
+              <strong id="sidebar-username">—</strong>
+            </div>
+          </div>
+
+          <nav class="main-nav" aria-label="Navegación principal">
+            <button class="nav-item is-active" type="button" data-view="markets">
+              <span aria-hidden="true">◆</span> Mercados
+            </button>
+            <button class="nav-item" type="button" data-view="bets">
+              <span aria-hidden="true">◎</span> Mis apuestas
+            </button>
+            <button class="nav-item" type="button" data-view="rankings">
+              <span aria-hidden="true">♛</span> Rankings
+            </button>
+            <button class="nav-item" type="button" data-view="history">
+              <span aria-hidden="true">↻</span> Historial
+            </button>
+            <button id="admin-nav-item" class="nav-item is-hidden" type="button" data-view="admin">
+              <span aria-hidden="true">⚙</span> Administración
+            </button>
+          </nav>
+
+          <div class="sidebar-note">
+            <span class="status-dot"></span>
+            <div>
+              <strong>Casino social</strong>
+              <small>Solo fichas ficticias</small>
+            </div>
+          </div>
+        </aside>
+
+        <div id="sidebar-backdrop" class="sidebar-backdrop"></div>
+
+        <div class="content-shell">
+          <section id="view-markets" class="app-view-section">
+            <div class="page-heading">
+              <div>
+                <p class="eyebrow">La cartelera</p>
+                <h2>Mercados abiertos</h2>
+                <p id="markets-summary" class="muted">Cargando mercados…</p>
+              </div>
+              <button class="button button-secondary refresh-button" type="button" data-refresh>
+                Actualizar
+              </button>
+            </div>
+
+            <div class="filter-bar">
+              <label class="search-field">
+                <span aria-hidden="true">⌕</span>
+                <input id="market-search" type="search" placeholder="Buscar un mercado…" />
+              </label>
+              <label>
+                <span class="sr-only">Categoría</span>
+                <select id="category-filter">
+                  <option value="Todas">Todas las categorías</option>
+                </select>
+              </label>
+              <label>
+                <span class="sr-only">Estado</span>
+                <select id="status-filter">
+                  <option value="Abierto">Abiertos</option>
+                  <option value="Todos">Todos los estados</option>
+                  <option value="Cerrado">Cerrados</option>
+                  <option value="Resuelto">Resueltos</option>
+                  <option value="Cancelado">Cancelados</option>
+                </select>
+              </label>
+            </div>
+
+            <div id="markets-container" class="market-groups"></div>
+          </section>
+
+          <section id="view-bets" class="app-view-section is-hidden">
+            <div class="page-heading">
+              <div>
+                <p class="eyebrow">Tu jugada</p>
+                <h2>Mis apuestas</h2>
+                <p class="muted">Seguimiento de todas tus apuestas y pagos potenciales.</p>
+              </div>
+              <button class="button button-secondary refresh-button" type="button" data-refresh>
+                Actualizar
+              </button>
+            </div>
+            <div id="bet-stat-cards" class="stat-grid"></div>
+            <div class="segmented-control" id="bet-filters" aria-label="Filtrar apuestas">
+              <button type="button" class="is-active" data-bet-status="Todas">Todas</button>
+              <button type="button" data-bet-status="Abierta">Abiertas</button>
+              <button type="button" data-bet-status="Ganada">Ganadas</button>
+              <button type="button" data-bet-status="Perdida">Perdidas</button>
+              <button type="button" data-bet-status="Devuelta">Devueltas</button>
+            </div>
+            <div id="bets-container" class="list-stack"></div>
+          </section>
+
+          <section id="view-rankings" class="app-view-section is-hidden">
+            <div class="page-heading">
+              <div>
+                <p class="eyebrow">El podio</p>
+                <h2>Rankings</h2>
+                <p class="muted">Saldo actual y pagos acumulados por ganancias.</p>
+              </div>
+              <button class="button button-secondary refresh-button" type="button" data-refresh>
+                Actualizar
+              </button>
+            </div>
+            <div class="ranking-grid">
+              <article class="panel-card">
+                <div class="panel-card-heading">
+                  <div>
+                    <span class="panel-icon">♛</span>
+                    <h3>Por saldo actual</h3>
+                  </div>
+                </div>
+                <div id="balance-ranking"></div>
+              </article>
+              <article class="panel-card">
+                <div class="panel-card-heading">
+                  <div>
+                    <span class="panel-icon">↗</span>
+                    <h3>Por ganancias</h3>
+                  </div>
+                </div>
+                <div id="winnings-ranking"></div>
+              </article>
+            </div>
+          </section>
+
+          <section id="view-history" class="app-view-section is-hidden">
+            <div class="page-heading">
+              <div>
+                <p class="eyebrow">La caja</p>
+                <h2>Historial de movimientos</h2>
+                <p class="muted">Cada ficha que entró o salió de tu cuenta.</p>
+              </div>
+              <button class="button button-secondary refresh-button" type="button" data-refresh>
+                Actualizar
+              </button>
+            </div>
+            <article class="panel-card table-card">
+              <div id="movements-container"></div>
+            </article>
+          </section>
+
+          <section id="view-admin" class="app-view-section is-hidden">
+            <div class="page-heading">
+              <div>
+                <p class="eyebrow">Mesa de control</p>
+                <h2>Administración</h2>
+                <p class="muted">Crear, cerrar, resolver y cancelar mercados.</p>
+              </div>
+              <button class="button button-secondary refresh-button" type="button" data-refresh>
+                Actualizar
+              </button>
+            </div>
+
+            <article id="admin-login-card" class="panel-card admin-login-card">
+              <div>
+                <p class="eyebrow">Acceso restringido</p>
+                <h3>Confirmá la clave de administrador</h3>
+                <p class="muted">La clave se valida en Apps Script y nunca se guarda en el frontend.</p>
+              </div>
+              <form id="admin-login-form" class="inline-form">
+                <label>
+                  Clave admin
+                  <input id="admin-password" type="password" autocomplete="current-password" required />
+                </label>
+                <button class="button button-primary" type="submit">Desbloquear panel</button>
+              </form>
+            </article>
+
+            <div id="admin-dashboard" class="is-hidden">
+              <div class="admin-grid">
+                <article class="panel-card">
+                  <div class="panel-card-heading">
+                    <div>
+                      <span class="panel-icon">＋</span>
+                      <h3>Crear mercado</h3>
+                    </div>
+                  </div>
+                  <form id="create-market-form" class="stack-form">
+                    <label>
+                      Categoría
+                      <select id="admin-market-category" required>
+                        <option>Viaje</option>
+                        <option>Wachineadas</option>
+                        <option>Quebrados</option>
+                        <option>Minas</option>
+                        <option>Peleas</option>
+                        <option>Especiales</option>
+                      </select>
+                    </label>
+                    <label>
+                      Evento
+                      <textarea id="admin-market-event" rows="3" maxlength="200" required></textarea>
+                    </label>
+                    <label>
+                      Tipo
+                      <select id="admin-market-type" required>
+                        <option value="SI_NO">Sí / No</option>
+                        <option value="NOMBRE">Nombre</option>
+                        <option value="OVER_UNDER">Más de / Menos de</option>
+                      </select>
+                    </label>
+                    <button class="button button-primary" type="submit">Crear mercado</button>
+                  </form>
+                </article>
+
+                <article class="panel-card">
+                  <div class="panel-card-heading">
+                    <div>
+                      <span class="panel-icon">◇</span>
+                      <h3>Agregar opción</h3>
+                    </div>
+                  </div>
+                  <form id="create-option-form" class="stack-form">
+                    <label>
+                      Mercado
+                      <select id="admin-option-market" required></select>
+                    </label>
+                    <label>
+                      Opción
+                      <input id="admin-option-name" maxlength="100" placeholder="Ej: Sí o Nico; en OVER_UNDER puede quedar vacío" />
+                    </label>
+                    <div class="form-row">
+                      <label>
+                        Línea
+                        <input id="admin-option-line" type="number" step="0.01" placeholder="Ej: 2.5" />
+                      </label>
+                      <label>
+                        Lado
+                        <select id="admin-option-side">
+                          <option value="">Sin lado</option>
+                          <option value="Menos de">Menos de</option>
+                          <option value="Más de">Más de</option>
+                        </select>
+                      </label>
+                    </div>
+                    <label>
+                      Cuota
+                      <input id="admin-option-odds" type="number" min="1" step="0.001" required />
+                    </label>
+                    <button class="button button-primary" type="submit">Agregar opción</button>
+                  </form>
+                </article>
+              </div>
+
+              <article class="panel-card admin-market-panel">
+                <div class="panel-card-heading">
+                  <div>
+                    <span class="panel-icon">⚙</span>
+                    <h3>Gestionar mercados y cuotas</h3>
+                  </div>
+                </div>
+                <div id="admin-markets-container" class="admin-market-list"></div>
+              </article>
+
+              <article class="panel-card table-card">
+                <div class="panel-card-heading">
+                  <div>
+                    <span class="panel-icon">◎</span>
+                    <h3>Todas las apuestas</h3>
+                  </div>
+                </div>
+                <div id="admin-bets-container"></div>
+              </article>
+            </div>
+          </section>
+        </div>
+      </section>
+    </main>
+
+    <div id="loading-overlay" class="loading-overlay is-hidden" role="status" aria-live="polite">
+      <div class="loader"></div>
+      <span>Barajando datos…</span>
+    </div>
+
+    <script src="app.js" defer></script>
+  </body>
+</html>
