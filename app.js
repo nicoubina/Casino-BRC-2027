@@ -356,6 +356,12 @@ function renderMarketCard(market) {
   const cancelDeadlineBadge = renderCancelDeadlineBadge(
     market.fecha_limite_cancelacion,
   );
+  const betDeadlineStatus = getBetDeadlineStatus(
+    market.fecha_limite_apuesta,
+  );
+  const betDeadlineBadge = renderBetDeadlineBadge(
+    market.fecha_limite_apuesta,
+  );
   const activeMarketBets = state.bets.filter(
     (bet) =>
       String(bet.mercado_id) === String(market.id) &&
@@ -367,16 +373,20 @@ function renderMarketCard(market) {
   const fullyLocked =
     market.tipo !== "OVER_UNDER" && activeMarketBets.length > 0;
   const isOpen = market.estado === "Abierto";
+  const acceptsBets =
+    isOpen &&
+    (!betDeadlineStatus.exists ||
+      (betDeadlineStatus.valid && !betDeadlineStatus.expired));
   const selectedId = String(state.selectedOptions[market.id] || "");
 
   let optionMarkup = "";
   if (market.tipo === "OVER_UNDER") {
-    optionMarkup = renderOverUnderOptions(market, options, selectedId, isOpen, lockedSides);
+    optionMarkup = renderOverUnderOptions(market, options, selectedId, acceptsBets, lockedSides);
   } else {
     optionMarkup = options.length
       ? options
           .map((option) =>
-            renderOptionButton(market, option, selectedId, isOpen && !fullyLocked),
+            renderOptionButton(market, option, selectedId, acceptsBets && !fullyLocked),
           )
           .join("")
       : '<p class="muted">Todavía no hay opciones cargadas.</p>';
@@ -385,6 +395,10 @@ function renderMarketCard(market) {
   let lockMessage = "";
   if (!isOpen) {
     lockMessage = `Este mercado está ${market.estado.toLowerCase()} y no acepta apuestas.`;
+  } else if (betDeadlineStatus.exists && betDeadlineStatus.expired) {
+    lockMessage = "Ya venció el plazo para apostar en este mercado.";
+  } else if (betDeadlineStatus.exists && !betDeadlineStatus.valid) {
+    lockMessage = "La fecha límite de apuestas no es válida.";
   } else if (fullyLocked) {
     lockMessage = "Ya hiciste una apuesta en este mercado.";
   } else if (market.tipo === "OVER_UNDER" && lockedSides.size) {
@@ -392,7 +406,7 @@ function renderMarketCard(market) {
   }
 
   const canBet =
-    isOpen &&
+    acceptsBets &&
     options.length > 0 &&
     !fullyLocked &&
     !(market.tipo === "OVER_UNDER" && lockedSides.size >= 2);
@@ -406,6 +420,7 @@ function renderMarketCard(market) {
         </div>
         <h4>${escapeHtml(market.evento)}</h4>
         ${cancelDeadlineBadge}
+        ${betDeadlineBadge}
       </div>
       <div class="market-options">
         ${optionMarkup}
@@ -625,6 +640,7 @@ function renderBets() {
             <strong>${escapeHtml(bet.evento || `Mercado #${bet.mercado_id}`)}</strong>
             <small>${escapeHtml(bet.opcion)} · ${formatDate(bet.fecha)}</small>
             ${renderCancelDeadlineBadge(market?.fecha_limite_cancelacion)}
+            ${renderBetDeadlineBadge(market?.fecha_limite_apuesta)}
           </div>
           <div class="bet-metric">
             <span>Monto</span>
@@ -921,6 +937,25 @@ function renderAdminMarkets() {
                 Guardar límite de cancelación
               </button>
             </div>
+            <div class="admin-bet-deadline-row">
+              <label>
+                Límite para realizar apuestas
+                <input
+                  type="datetime-local"
+                  value="${escapeHtml(formatDateTimeLocal(market.fecha_limite_apuesta))}"
+                  data-admin-bet-deadline-input="${escapeHtml(market.id)}"
+                  ${actionable ? "" : "disabled"}
+                />
+              </label>
+              <button
+                class="button button-secondary button-small"
+                type="button"
+                data-admin-update-bet-deadline="${escapeHtml(market.id)}"
+                ${actionable ? "" : "disabled"}
+              >
+                Guardar límite de apuestas
+              </button>
+            </div>
             ${
               options.length
                 ? options
@@ -978,6 +1013,25 @@ function renderAdminMarkets() {
 }
 
 async function handleAdminMarketClick(event) {
+  const betDeadlineButton = event.target.closest(
+    "[data-admin-update-bet-deadline]",
+  );
+  if (betDeadlineButton) {
+    const marketId = betDeadlineButton.dataset.adminUpdateBetDeadline;
+    const input = elements.adminMarketsContainer.querySelector(
+      `[data-admin-bet-deadline-input="${cssEscape(marketId)}"]`,
+    );
+    await runAdminAction(
+      "adminUpdateBetDeadline",
+      {
+        mercado_id: marketId,
+        fecha_limite_apuesta: input.value,
+      },
+      "Fecha límite de apuestas actualizada.",
+    );
+    return;
+  }
+
   const deadlineButton = event.target.closest(
     "[data-admin-update-cancel-deadline]",
   );
@@ -1279,6 +1333,36 @@ function renderCancelDeadlineBadge(value) {
     : "Cancelación disponible hasta";
   return `
     <span class="cancel-deadline-badge ${status.expired ? "is-expired" : ""}">
+      ${label}: ${escapeHtml(status.formatted)}
+    </span>
+  `;
+}
+
+function getBetDeadlineStatus(value) {
+  if (value === null || value === undefined || String(value).trim() === "") {
+    return { exists: false, valid: true, expired: false, formatted: "" };
+  }
+  const date = new Date(value);
+  const valid = !Number.isNaN(date.getTime());
+  return {
+    exists: true,
+    valid,
+    expired: valid && Date.now() > date.getTime(),
+    formatted: valid ? formatCancelDeadline(date) : "",
+  };
+}
+
+function renderBetDeadlineBadge(value) {
+  const status = getBetDeadlineStatus(value);
+  if (!status.exists) return "";
+  if (!status.valid) {
+    return '<span class="bet-deadline-badge is-expired">Fecha límite de apuestas inválida</span>';
+  }
+  const label = status.expired
+    ? "Plazo de apuestas vencido"
+    : "Apuestas disponibles hasta";
+  return `
+    <span class="bet-deadline-badge ${status.expired ? "is-expired" : ""}">
       ${label}: ${escapeHtml(status.formatted)}
     </span>
   `;

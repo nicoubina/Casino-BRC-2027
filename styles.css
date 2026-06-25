@@ -779,7 +779,8 @@ label {
   line-height: 1.35;
 }
 
-.cancel-deadline-badge {
+.cancel-deadline-badge,
+.bet-deadline-badge {
   display: inline-flex;
   align-items: center;
   width: fit-content;
@@ -795,7 +796,8 @@ label {
   line-height: 1.35;
 }
 
-.cancel-deadline-badge.is-expired {
+.cancel-deadline-badge.is-expired,
+.bet-deadline-badge.is-expired {
   border-color: rgba(241, 110, 110, 0.22);
   background: rgba(241, 110, 110, 0.07);
   color: #f3aaaa;
@@ -1028,7 +1030,8 @@ label {
   font-size: 0.8rem;
 }
 
-.bet-card-title .cancel-deadline-badge {
+.bet-card-title .cancel-deadline-badge,
+.bet-card-title .bet-deadline-badge {
   display: flex;
   margin-top: 8px;
   white-space: normal;
@@ -1285,7 +1288,8 @@ label {
   padding: 12px 16px 16px;
 }
 
-.admin-cancel-deadline-row {
+.admin-cancel-deadline-row,
+.admin-bet-deadline-row {
   display: grid;
   grid-template-columns: minmax(210px, 1fr) auto;
   align-items: end;
@@ -1597,7 +1601,8 @@ label {
     padding: 7px 9px;
   }
 
-  .cancel-deadline-badge {
+  .cancel-deadline-badge,
+  .bet-deadline-badge {
     border-radius: 9px;
     white-space: normal;
   }
@@ -1609,6 +1614,7 @@ label {
   .inline-form,
   .admin-market-summary,
   .admin-cancel-deadline-row,
+  .admin-bet-deadline-row,
   .admin-option-row,
   .admin-resolution {
     grid-template-columns: 1fr;
