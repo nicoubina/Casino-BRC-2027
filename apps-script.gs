@@ -7,7 +7,7 @@
  * 3) Desplegá como Aplicación web.
  */
 
-const SPREADSHEET_ID = "PEGA_AQUI_EL_ID_DE_TU_GOOGLE_SHEET";
+const SPREADSHEET_ID = "https://script.google.com/macros/s/AKfycby_ZdrJDTGVAT-lB9yLComJUe65fGOtoyqwZfp34jXrstWs45LNP2ZceeO30B9t5Qsq/exec";
 
 const SHEETS = {
   CONFIG: "Config",
