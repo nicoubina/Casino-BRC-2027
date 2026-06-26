@@ -15,7 +15,6 @@ const SHEETS = {
   MARKETS: "Mercados",
   OPTIONS: "Opciones",
   BETS: "Apuestas",
-  ROOM_COMBINATIONS: "HabitacionCombinadas",
   RESULTS: "Resultados",
   MOVEMENTS: "Movimientos",
 };
@@ -49,57 +48,14 @@ const HEADERS = {
     "pago",
     "fecha",
   ],
-  HabitacionCombinadas: [
-    "id",
-    "usuario",
-    "mercado_cantidad_id",
-    "apuesta_cantidad_id",
-    "cantidad_personas",
-    "companeros_json",
-    "cuota_cantidad",
-    "cuota_companeros",
-    "cuota_total",
-    "monto",
-    "estado",
-    "pago",
-    "fecha",
-  ],
   Resultados: ["mercado_id", "resultado", "opcion_id_ganadora", "fecha_resolucion"],
   Movimientos: ["id", "usuario", "tipo", "monto", "descripcion", "fecha"],
 };
 
-const MARKET_TYPES = ["SI_NO", "NOMBRE", "OVER_UNDER", "HABITACION_COMBINADA"];
+const MARKET_TYPES = ["SI_NO", "NOMBRE", "OVER_UNDER"];
 const MARKET_STATES = ["Abierto", "Cerrado", "Resuelto", "Cancelado"];
-const CATEGORY_ORDER = ["Viaje", "Habitaciones", "Wachineadas", "Quebrados", "Minas", "Peleas", "Especiales"];
+const CATEGORY_ORDER = ["Viaje", "Wachineadas", "Quebrados", "Minas", "Peleas", "Especiales"];
 const ADMIN_SESSION_SECONDS = 21600;
-const ROOM_CATEGORY = "Habitaciones";
-const ROOM_COUNT_EVENT = "¿Cuántas personas habrá en tu habitación?";
-const ROOM_COMBINATION_EVENT = "Combinada de habitación";
-const ROOM_COMPANIONS = [
-  ["Romi", 1.4],
-  ["Nico", 1.4],
-  ["Juanpi", 1.4],
-  ["Fran", 1.4],
-  ["Jane", 1.4],
-  ["Facu", 1.4],
-  ["Nachón", 1.4],
-  ["Joaco", 1.4],
-  ["Gonza Boca", 1.4],
-  ["Gonza R", 1.4],
-  ["Ivi", 1.4],
-  ["Dante", 1.4],
-  ["Rocco", 1.4],
-  ["Biglia", 1.4],
-  ["Jesús", 1.4],
-  ["Perrito Barrios", 7],
-  ["Abelle", 6],
-  ["Pipita", 3],
-  ["Rocío", 15],
-  ["Nico F", 15],
-  ["Mathi Budani", 15],
-  ["Mateo", 15],
-  ["Nachito Pineda", 15],
-];
 
 function doGet(e) {
   const payload = Object.assign({}, (e && e.parameter) || {});
@@ -129,7 +85,6 @@ function routeRequest_(payload) {
       getUserData: getUserData_,
       getMarkets: getMarkets_,
       placeBet: placeBet_,
-      placeHabitacionCombinada: placeHabitacionCombinada_,
       cancelBet: cancelBet_,
       getMyBets: getMyBets_,
       getRankingSaldo: getBalanceRanking_,
@@ -145,7 +100,6 @@ function routeRequest_(payload) {
       adminResolveMarket: adminResolveMarket_,
       adminCancelMarket: adminCancelMarket_,
       adminGetAllBets: adminGetAllBets_,
-      adminResolveHabitacionCombinadas: adminResolveHabitacionCombinadas_,
     };
 
     if (!handlers[action]) throw new Error("Acción no reconocida.");
@@ -299,9 +253,6 @@ function placeBet_(payload) {
     });
     if (!market) throw new Error("El mercado no existe.");
     if (market.estado !== "Abierto") throw new Error("El mercado no está abierto.");
-    if (market.tipo === "HABITACION_COMBINADA") {
-      throw new Error("La combinada de habitación se apuesta desde su bloque especial.");
-    }
     const betDeadline = optionalDate_(
       market.fecha_limite_apuesta,
       "La fecha límite de apuestas",
@@ -395,130 +346,6 @@ function placeBet_(payload) {
   });
 }
 
-function placeHabitacionCombinada_(payload) {
-  return withScriptLock_(function () {
-    const username = validateUsername_(payload.usuario);
-    const countBetId = requiredId_(payload.apuesta_cantidad_id, "apuesta de cantidad");
-    const amount = positiveNumber_(payload.monto, "El monto");
-
-    const usersSheet = getSheet_(SHEETS.USERS);
-    const users = getRowsAsObjects_(usersSheet);
-    const user = findUser_(users, username);
-    if (!user) throw new Error("Usuario no encontrado.");
-
-    const bets = getRowsAsObjects_(getSheet_(SHEETS.BETS));
-    const countBet = bets.find(function (bet) {
-      return String(bet.id) === String(countBetId);
-    });
-    if (!countBet) throw new Error("La apuesta de cantidad no existe.");
-    if (normalizeKey_(countBet.usuario) !== normalizeKey_(username)) {
-      throw new Error("La apuesta de cantidad no pertenece al usuario.");
-    }
-    if (String(countBet.estado) !== "Abierta") {
-      throw new Error("La apuesta de cantidad debe estar abierta.");
-    }
-
-    const markets = getRowsAsObjects_(getSheet_(SHEETS.MARKETS));
-    const market = markets.find(function (item) {
-      return String(item.id) === String(countBet.mercado_id);
-    });
-    if (!market || !isRoomCountMarket_(market)) {
-      throw new Error("La apuesta elegida no corresponde al mercado de cantidad de habitación.");
-    }
-    if (String(market.estado) !== "Abierto") {
-      throw new Error("El mercado de habitación no está abierto.");
-    }
-
-    const betDeadline = optionalDate_(
-      market.fecha_limite_apuesta,
-      "La fecha límite de apuestas",
-    );
-    if (betDeadline && new Date().getTime() > betDeadline.getTime()) {
-      throw new Error("Ya venció el plazo para apostar en este mercado.");
-    }
-
-    const options = getRowsAsObjects_(getSheet_(SHEETS.OPTIONS));
-    const countOption = options.find(function (option) {
-      return (
-        String(option.id) === String(countBet.opcion_id) &&
-        String(option.mercado_id) === String(market.id)
-      );
-    });
-    if (!countOption) throw new Error("No se encontró la opción de cantidad apostada.");
-
-    const roomSize = parseRoomSize_(countBet.opcion || countOption.opcion);
-    const requiredCompanions = roomSize - 1;
-    const companionSelection = validateRoomCompanionSelection_(
-      payload.companeros,
-      username,
-      requiredCompanions,
-    );
-
-    const combinationsSheet = getRoomCombinationsSheet_();
-    const combinations = getRowsAsObjects_(combinationsSheet);
-    const duplicated = combinations.some(function (combination) {
-      return (
-        String(combination.apuesta_cantidad_id) === String(countBetId) &&
-        String(combination.estado) === "Abierta"
-      );
-    });
-    if (duplicated) {
-      throw new Error("Ya existe una combinada abierta para esa apuesta de cantidad.");
-    }
-
-    const balance = number_(user.saldo);
-    if (balance < amount) throw new Error("Saldo insuficiente.");
-
-    const now = new Date();
-    const combinationId = nextId_(combinations);
-    const countOdds = number_(countBet.cuota);
-    const companionOdds = roundNumber_(companionSelection.odds);
-    const totalOdds = roundNumber_(countOdds * companionOdds);
-    const newBalance = roundNumber_(balance - amount);
-
-    usersSheet.getRange(user._row, headerIndex_(usersSheet, "saldo")).setValue(newBalance);
-    combinationsSheet.appendRow([
-      combinationId,
-      username,
-      market.id,
-      countBetId,
-      roomSize,
-      JSON.stringify(companionSelection.names),
-      countOdds,
-      companionOdds,
-      totalOdds,
-      amount,
-      "Abierta",
-      0,
-      now,
-    ]);
-
-    appendMovement_(
-      username,
-      "Apuesta",
-      -amount,
-      ROOM_COMBINATION_EVENT + " · " + roomSize + " personas · " + companionSelection.names.join(", "),
-      now,
-    );
-
-    return {
-      data: {
-        combinada: {
-          id: combinationId,
-          apuesta_cantidad_id: countBetId,
-          cantidad_personas: roomSize,
-          companeros: companionSelection.names,
-          cuota_total: totalOdds,
-          monto: amount,
-          estado: "Abierta",
-        },
-        saldo: newBalance,
-      },
-      message: "Combinada de habitación registrada correctamente.",
-    };
-  });
-}
-
 function cancelBet_(payload) {
   return withScriptLock_(function () {
     const username = validateUsername_(payload.usuario);
@@ -560,18 +387,7 @@ function cancelBet_(payload) {
     if (!user) throw new Error("Usuario no encontrado.");
 
     const amount = positiveNumber_(bet.monto, "El monto de la apuesta");
-    const combinationsSheet = getRoomCombinationsSheet_();
-    const linkedCombinations = getRowsAsObjects_(combinationsSheet).filter(function (combination) {
-      return (
-        String(combination.apuesta_cantidad_id) === String(betId) &&
-        normalizeKey_(combination.usuario) === normalizeKey_(username) &&
-        String(combination.estado) === "Abierta"
-      );
-    });
-    const combinationsRefund = linkedCombinations.reduce(function (sum, combination) {
-      return sum + positiveNumber_(combination.monto, "El monto de la combinada");
-    }, 0);
-    const newBalance = roundNumber_(number_(user.saldo) + amount + combinationsRefund);
+    const newBalance = roundNumber_(number_(user.saldo) + amount);
     const now = new Date();
 
     usersSheet
@@ -584,16 +400,6 @@ function cancelBet_(payload) {
       .getRange(bet._row, headerIndex_(betsSheet, "pago"))
       .setValue(amount);
 
-    // Si se cancela la apuesta de cantidad, se devuelven sus combinadas abiertas vinculadas.
-    linkedCombinations.forEach(function (combination) {
-      combinationsSheet
-        .getRange(combination._row, headerIndex_(combinationsSheet, "estado"))
-        .setValue("Devuelta");
-      combinationsSheet
-        .getRange(combination._row, headerIndex_(combinationsSheet, "pago"))
-        .setValue(number_(combination.monto));
-    });
-
     appendMovement_(
       username,
       "Devolucion",
@@ -601,24 +407,13 @@ function cancelBet_(payload) {
       "Cancelación de apuesta en " + market.evento + " · " + bet.opcion,
       now,
     );
-    if (combinationsRefund > 0) {
-      appendMovement_(
-        username,
-        "Devolucion",
-        combinationsRefund,
-        "Cancelación de combinada vinculada a " + market.evento,
-        now,
-      );
-    }
 
     return {
       data: {
         saldo: newBalance,
         apuesta_id: betId,
       },
-      message: combinationsRefund > 0
-        ? "Apuesta y combinada vinculada canceladas. Fichas devueltas."
-        : "Apuesta cancelada y fichas devueltas.",
+      message: "Apuesta cancelada y fichas devueltas.",
     };
   });
 }
@@ -641,14 +436,7 @@ function getMyBets_(payload) {
     })
     .sort(sortByDateDesc_);
 
-  const roomCombinations = getRowsAsObjects_(getRoomCombinationsSheet_())
-    .filter(function (combination) {
-      return normalizeKey_(combination.usuario) === normalizeKey_(username);
-    })
-    .map(serializeRoomCombination_)
-    .sort(sortByDateDesc_);
-
-  return { bets: bets, habitacion_combinadas: roomCombinations };
+  return { bets: bets };
 }
 
 function getBalanceRanking_() {
@@ -1043,9 +831,6 @@ function adminCancelMarket_(payload) {
     const now = new Date();
     const movementRows = [];
     let refunds = 0;
-    let combinationRefunds = 0;
-    let combinationsSheet = null;
-    let combinationValues = null;
 
     for (let row = 1; row < betValues.length; row += 1) {
       if (
@@ -1076,47 +861,8 @@ function adminCancelMarket_(payload) {
       refunds += 1;
     }
 
-    if (isRoomCountMarket_(market)) {
-      combinationsSheet = getRoomCombinationsSheet_();
-      combinationValues = combinationsSheet.getDataRange().getValues();
-      const combinationIndex = indexMap_(combinationValues[0]);
-      for (let row = 1; row < combinationValues.length; row += 1) {
-        if (
-          String(combinationValues[row][combinationIndex.mercado_cantidad_id]) !== String(marketId) ||
-          String(combinationValues[row][combinationIndex.estado]) !== "Abierta"
-        ) {
-          continue;
-        }
-
-        const username = String(combinationValues[row][combinationIndex.usuario]);
-        const amount = number_(combinationValues[row][combinationIndex.monto]);
-        const userRow = userRows[normalizeKey_(username)];
-        if (userRow === undefined) throw new Error("No se encontró al usuario " + username + ".");
-
-        combinationValues[row][combinationIndex.estado] = "Devuelta";
-        combinationValues[row][combinationIndex.pago] = amount;
-        userValues[userRow][userIndex.saldo] = roundNumber_(
-          number_(userValues[userRow][userIndex.saldo]) + amount,
-        );
-        movementRows.push([
-          null,
-          username,
-          "Devolucion",
-          amount,
-          "Devolución por combinada de habitación cancelada",
-          now,
-        ]);
-        combinationRefunds += 1;
-      }
-    }
-
     if (betValues.length > 1) {
       betsSheet.getRange(1, 1, betValues.length, betValues[0].length).setValues(betValues);
-    }
-    if (combinationValues && combinationValues.length > 1) {
-      combinationsSheet
-        .getRange(1, 1, combinationValues.length, combinationValues[0].length)
-        .setValues(combinationValues);
     }
     if (userValues.length > 1) {
       usersSheet.getRange(1, 1, userValues.length, userValues[0].length).setValues(userValues);
@@ -1127,13 +873,8 @@ function adminCancelMarket_(payload) {
       .setValue("Cancelado");
 
     return {
-      data: { refunds: refunds, combination_refunds: combinationRefunds },
-      message:
-        "Mercado cancelado. Apuestas devueltas: " +
-        refunds +
-        ". Combinadas devueltas: " +
-        combinationRefunds +
-        ".",
+      data: { refunds: refunds },
+      message: "Mercado cancelado. Apuestas devueltas: " + refunds + ".",
     };
   });
 }
@@ -1150,105 +891,12 @@ function adminGetAllBets_(payload) {
       return serializeBet_(bet, marketMap);
     })
     .sort(sortByDateDesc_);
-  const roomCombinations = getRowsAsObjects_(getRoomCombinationsSheet_())
-    .map(serializeRoomCombination_)
-    .sort(sortByDateDesc_);
-  return { bets: bets, habitacion_combinadas: roomCombinations };
-}
-
-function adminResolveHabitacionCombinadas_(payload) {
-  requireAdmin_(payload);
-  return withScriptLock_(function () {
-    const realRoomSize = requiredRoomSize_(payload.cantidad_real);
-    const realCompanions = validateRoomCompanionSelection_(
-      payload.companeros_reales,
-      "",
-      realRoomSize - 1,
-      { skipOwnUser: true, label: "La lista real de compañeros" },
-    );
-
-    const combinationsSheet = getRoomCombinationsSheet_();
-    const combinationValues = combinationsSheet.getDataRange().getValues();
-    const combinationIndex = indexMap_(combinationValues[0]);
-    const usersSheet = getSheet_(SHEETS.USERS);
-    const userValues = usersSheet.getDataRange().getValues();
-    const userIndex = indexMap_(userValues[0]);
-    const userRows = {};
-    for (let i = 1; i < userValues.length; i += 1) {
-      userRows[normalizeKey_(userValues[i][userIndex.usuario])] = i;
-    }
-
-    const now = new Date();
-    const movementRows = [];
-    let winners = 0;
-    let losers = 0;
-
-    for (let row = 1; row < combinationValues.length; row += 1) {
-      if (String(combinationValues[row][combinationIndex.estado]) !== "Abierta") {
-        continue;
-      }
-
-      const username = String(combinationValues[row][combinationIndex.usuario]);
-      const selectedCompanions = parseCompanionsJson_(
-        combinationValues[row][combinationIndex.companeros_json],
-      );
-      const wins =
-        number_(combinationValues[row][combinationIndex.cantidad_personas]) === realRoomSize &&
-        sameCompanionSet_(selectedCompanions, realCompanions.names);
-
-      if (wins) {
-        const amount = number_(combinationValues[row][combinationIndex.monto]);
-        const odds = number_(combinationValues[row][combinationIndex.cuota_total]);
-        const payment = roundNumber_(amount * odds);
-        const userRow = userRows[normalizeKey_(username)];
-        if (userRow === undefined) throw new Error("No se encontró al usuario " + username + ".");
-
-        combinationValues[row][combinationIndex.estado] = "Ganada";
-        combinationValues[row][combinationIndex.pago] = payment;
-        userValues[userRow][userIndex.saldo] = roundNumber_(
-          number_(userValues[userRow][userIndex.saldo]) + payment,
-        );
-        movementRows.push([
-          null,
-          username,
-          "Ganancia",
-          payment,
-          "Ganó " + ROOM_COMBINATION_EVENT + " · " + realRoomSize + " personas",
-          now,
-        ]);
-        winners += 1;
-      } else {
-        combinationValues[row][combinationIndex.estado] = "Perdida";
-        combinationValues[row][combinationIndex.pago] = 0;
-        losers += 1;
-      }
-    }
-
-    if (combinationValues.length > 1) {
-      combinationsSheet
-        .getRange(1, 1, combinationValues.length, combinationValues[0].length)
-        .setValues(combinationValues);
-    }
-    if (userValues.length > 1) {
-      usersSheet.getRange(1, 1, userValues.length, userValues[0].length).setValues(userValues);
-    }
-    appendMovementRows_(movementRows);
-
-    return {
-      data: { winners: winners, losers: losers },
-      message:
-        "Combinadas resueltas. Ganadoras: " +
-        winners +
-        ". Perdedoras: " +
-        losers +
-        ".",
-    };
-  });
+  return { bets: bets };
 }
 
 /**
  * Ejecutar manualmente una vez. Crea hojas, encabezados, configuración,
- * usuarios de prueba y los mercados / opciones del documento fuente.
+ * usuarios de prueba y los 61 mercados / 384 opciones del documento fuente.
  * No duplica mercados si las hojas ya tienen datos.
  */
 function setupCasino() {
@@ -1268,19 +916,6 @@ function setupCasino() {
     markets: getRowsAsObjects_(getSheet_(SHEETS.MARKETS)).length,
     options: getRowsAsObjects_(getSheet_(SHEETS.OPTIONS)).length,
   };
-}
-
-/**
- * Ejecutar manualmente en planillas existentes para agregar solo Habitaciones.
- * No toca usuarios, apuestas, saldos ni movimientos, y evita duplicar mercados.
- */
-function seedHabitacionesMarkets() {
-  const spreadsheet = getDatabase_();
-  migrateCasinoSchema_(spreadsheet);
-  ensureSheet_(spreadsheet, SHEETS.MARKETS, HEADERS.Mercados);
-  ensureSheet_(spreadsheet, SHEETS.OPTIONS, HEADERS.Opciones);
-  ensureSheet_(spreadsheet, SHEETS.ROOM_COMBINATIONS, HEADERS.HabitacionCombinadas);
-  return appendMarketDefinitionsIfMissing_(getHabitacionesMarketDefinitions_());
 }
 
 function seedConfig_() {
@@ -1376,135 +1011,6 @@ function seedMarketsAndOptions_() {
     .setValues(optionRows);
 }
 
-function appendMarketDefinitionsIfMissing_(definitions) {
-  const marketsSheet = getSheet_(SHEETS.MARKETS);
-  const optionsSheet = getSheet_(SHEETS.OPTIONS);
-  const markets = getRowsAsObjects_(marketsSheet);
-  const options = getRowsAsObjects_(optionsSheet);
-  const existingKeys = new Set(
-    markets.map(function (market) {
-      return normalizeKey_(market.categoria) + "|" + normalizeKey_(market.evento);
-    }),
-  );
-
-  const now = new Date();
-  const marketRows = [];
-  const optionRows = [];
-  let marketId = nextId_(markets);
-  let optionId = nextId_(options);
-  let skippedMarkets = 0;
-
-  definitions.forEach(function (definition) {
-    const key = normalizeKey_(definition.categoria) + "|" + normalizeKey_(definition.evento);
-    if (existingKeys.has(key)) {
-      skippedMarkets += 1;
-      return;
-    }
-    existingKeys.add(key);
-    marketRows.push([
-      marketId,
-      definition.categoria,
-      definition.evento,
-      definition.tipo,
-      "Abierto",
-      now,
-      "",
-      "",
-    ]);
-    definition.opciones.forEach(function (option) {
-      optionRows.push([
-        optionId,
-        marketId,
-        option.opcion,
-        option.linea === null ? "" : option.linea,
-        option.lado || "",
-        option.cuota,
-      ]);
-      optionId += 1;
-    });
-    marketId += 1;
-  });
-
-  if (marketRows.length) {
-    marketsSheet
-      .getRange(marketsSheet.getLastRow() + 1, 1, marketRows.length, marketRows[0].length)
-      .setValues(marketRows);
-  }
-  if (optionRows.length) {
-    optionsSheet
-      .getRange(optionsSheet.getLastRow() + 1, 1, optionRows.length, optionRows[0].length)
-      .setValues(optionRows);
-  }
-
-  return {
-    inserted_markets: marketRows.length,
-    inserted_options: optionRows.length,
-    skipped_markets: skippedMarkets,
-  };
-}
-
-function getHabitacionesMarketDefinitions_() {
-  return [
-    {
-      categoria: ROOM_CATEGORY,
-      evento: ROOM_COUNT_EVENT,
-      tipo: "NOMBRE",
-      opciones: [
-        ["3 personas", 8],
-        ["4 personas", 2.2],
-        ["5 personas", 2],
-        ["6 personas", 3.5],
-        ["7 personas", 8],
-        ["8 personas", 10],
-        ["9 personas", 40],
-        ["10 personas", 80],
-      ].map(function (entry) {
-        return { opcion: entry[0], linea: null, lado: "", cuota: entry[1] };
-      }),
-    },
-    {
-      categoria: ROOM_CATEGORY,
-      evento: "¿Habrá al menos un quebrado dentro de tu habitación?",
-      tipo: "SI_NO",
-      opciones: [
-        { opcion: "Sí", linea: null, lado: "", cuota: 1.9 },
-        { opcion: "No", linea: null, lado: "", cuota: 1.1 },
-      ],
-    },
-    {
-      categoria: ROOM_CATEGORY,
-      evento: "¿Será la habitación con más minas llevadas a solas?",
-      tipo: "SI_NO",
-      opciones: [
-        { opcion: "Sí", linea: null, lado: "", cuota: 2.8 },
-        { opcion: "No", linea: null, lado: "", cuota: 1.15 },
-      ],
-    },
-    {
-      categoria: ROOM_CATEGORY,
-      evento: "¿Cuántos quebrados tendrá tu habitación?",
-      tipo: "OVER_UNDER",
-      opciones: [
-        { opcion: "Menos de 1", linea: 1, lado: "Menos de", cuota: 1.15 },
-        { opcion: "Más de 1", linea: 1, lado: "Más de", cuota: 1.9 },
-        { opcion: "Menos de 2", linea: 2, lado: "Menos de", cuota: 1.1 },
-        { opcion: "Más de 2", linea: 2, lado: "Más de", cuota: 3.5 },
-        { opcion: "Menos de 3", linea: 3, lado: "Menos de", cuota: 1.05 },
-        { opcion: "Más de 3", linea: 3, lado: "Más de", cuota: 10 },
-      ],
-    },
-    {
-      categoria: ROOM_CATEGORY,
-      evento: "¿Habrá por lo menos una vez que la habitación sea usada como previa?",
-      tipo: "SI_NO",
-      opciones: [
-        { opcion: "Sí", linea: null, lado: "", cuota: 1.9 },
-        { opcion: "No", linea: null, lado: "", cuota: 1.3 },
-      ],
-    },
-  ];
-}
-
 function getInitialMarketDefinitions_() {
   const markets = [];
 
@@ -1554,10 +1060,6 @@ function getInitialMarketDefinitions_() {
       opciones: options,
     });
   }
-
-  getHabitacionesMarketDefinitions_().forEach(function (definition) {
-    markets.push(definition);
-  });
 
   addYesNo("Wachineadas", "¿Habrá una wachineada de Facu?", 1.1, 3.5);
   addYesNo("Wachineadas", "¿Habrá una wachineada de Nachón?", 1.25, 2.8);
@@ -1967,14 +1469,6 @@ function getDatabase_() {
   return SpreadsheetApp.openById(SPREADSHEET_ID);
 }
 
-function getRoomCombinationsSheet_() {
-  return ensureSheet_(
-    getDatabase_(),
-    SHEETS.ROOM_COMBINATIONS,
-    HEADERS.HabitacionCombinadas,
-  );
-}
-
 function getSheet_(name) {
   const sheet = getDatabase_().getSheetByName(name);
   if (!sheet) {
@@ -1999,7 +1493,6 @@ function migrateCasinoSchema_(spreadsheet) {
       "fecha_limite_apuesta",
     ]);
   }
-  ensureSheet_(spreadsheet, SHEETS.ROOM_COMBINATIONS, HEADERS.HabitacionCombinadas);
 }
 
 function ensureOptionalColumns_(sheet, columns) {
@@ -2136,98 +1629,6 @@ function requireMarket_(marketId, optionalSheet) {
   });
   if (!market) throw new Error("Mercado no encontrado.");
   return market;
-}
-
-function isRoomCountMarket_(market) {
-  return (
-    normalizeKey_(market.categoria) === normalizeKey_(ROOM_CATEGORY) &&
-    normalizeKey_(market.evento) === normalizeKey_(ROOM_COUNT_EVENT)
-  );
-}
-
-function parseRoomSize_(value) {
-  const match = String(value || "").match(/\d+/);
-  if (!match) throw new Error("No se pudo leer la cantidad de personas de la habitación.");
-  return requiredRoomSize_(match[0]);
-}
-
-function requiredRoomSize_(value) {
-  const parsed = Number(value);
-  if (!Number.isInteger(parsed) || parsed < 3 || parsed > 10) {
-    throw new Error("La cantidad real de personas debe ser un entero entre 3 y 10.");
-  }
-  return parsed;
-}
-
-function validateRoomCompanionSelection_(value, username, requiredCount, options) {
-  const config = options || {};
-  const label = config.label || "La selección de compañeros";
-  const companionMap = getRoomCompanionMap_();
-  const seen = new Set();
-  const names = [];
-  let odds = 1;
-
-  parseCompanionInput_(value).forEach(function (rawName) {
-    const name = String(rawName || "").trim().replace(/\s+/g, " ");
-    if (!name) return;
-    const key = normalizeKey_(name);
-    if (seen.has(key)) throw new Error("No se puede elegir dos veces a " + name + ".");
-    if (!config.skipOwnUser && username && key === normalizeKey_(username)) {
-      throw new Error("No podés seleccionarte como compañero.");
-    }
-    const companion = companionMap[key];
-    if (!companion) throw new Error(name + " no es un compañero válido para la combinada.");
-    seen.add(key);
-    names.push(companion.name);
-    odds *= companion.odds;
-  });
-
-  if (names.length !== requiredCount) {
-    throw new Error(label + " debe tener exactamente " + requiredCount + " compañeros.");
-  }
-
-  return { names: names, odds: odds };
-}
-
-function parseCompanionInput_(value) {
-  if (Array.isArray(value)) return value;
-  const text = String(value || "").trim();
-  if (!text) return [];
-  try {
-    const parsed = JSON.parse(text);
-    if (Array.isArray(parsed)) return parsed;
-  } catch (_error) {
-    // El admin puede ingresar una lista separada por comas o saltos de línea.
-  }
-  return text.split(/[,;\n]+/);
-}
-
-function getRoomCompanionMap_() {
-  const map = {};
-  ROOM_COMPANIONS.forEach(function (entry) {
-    map[normalizeKey_(entry[0])] = { name: entry[0], odds: number_(entry[1]) };
-  });
-  return map;
-}
-
-function parseCompanionsJson_(value) {
-  try {
-    const parsed = JSON.parse(String(value || "[]"));
-    return Array.isArray(parsed)
-      ? parsed.map(function (name) { return String(name); })
-      : [];
-  } catch (_error) {
-    return [];
-  }
-}
-
-function sameCompanionSet_(left, right) {
-  const leftKeys = left.map(normalizeKey_).sort();
-  const rightKeys = right.map(normalizeKey_).sort();
-  if (leftKeys.length !== rightKeys.length) return false;
-  return leftKeys.every(function (key, index) {
-    return key === rightKeys[index];
-  });
 }
 
 function appendMovement_(username, type, amount, description, date) {
@@ -2374,31 +1775,6 @@ function serializeOption_(option) {
     linea: option.linea === "" ? "" : number_(option.linea),
     lado: String(option.lado || ""),
     cuota: number_(option.cuota),
-  };
-}
-
-function serializeRoomCombination_(combination) {
-  const companions = parseCompanionsJson_(combination.companeros_json);
-  const roomSize = number_(combination.cantidad_personas);
-  return {
-    id: combination.id,
-    usuario: String(combination.usuario),
-    mercado_cantidad_id: combination.mercado_cantidad_id,
-    apuesta_cantidad_id: combination.apuesta_cantidad_id,
-    cantidad_personas: roomSize,
-    companeros: companions,
-    companeros_text: companions.join(", "),
-    cuota_cantidad: number_(combination.cuota_cantidad),
-    cuota_companeros: number_(combination.cuota_companeros),
-    cuota_total: number_(combination.cuota_total),
-    monto: number_(combination.monto),
-    estado: String(combination.estado),
-    pago: number_(combination.pago),
-    fecha: toIso_(combination.fecha),
-    evento: ROOM_COMBINATION_EVENT,
-    opcion: roomSize + " personas · " + companions.join(", "),
-    cuota: number_(combination.cuota_total),
-    tipo_apuesta: "HABITACION_COMBINADA",
   };
 }
 
