@@ -32,6 +32,7 @@ const HEADERS = {
     "fecha_creacion",
     "fecha_limite_cancelacion",
     "fecha_limite_apuesta",
+    "permitir_apuesta_propia",
   ],
   Opciones: ["id", "mercado_id", "opcion", "linea", "lado", "cuota"],
   Apuestas: [
@@ -72,6 +73,7 @@ const MARKET_TYPES = ["SI_NO", "NOMBRE", "OVER_UNDER", "HABITACION_COMBINADA"];
 const MARKET_STATES = ["Abierto", "Cerrado", "Resuelto", "Cancelado"];
 const CATEGORY_ORDER = ["Viaje", "Habitaciones", "Wachineadas", "Quebrados", "Minas", "Peleas", "Especiales"];
 const ADMIN_SESSION_SECONDS = 21600;
+const ALLOWED_USERS = ["Capu", "Nico", "Juanpi", "Fran", "Jane"];
 const ROOM_CATEGORY = "Habitaciones";
 const ROOM_COUNT_EVENT = "¿Cuántas personas habrá en tu habitación?";
 const ROOM_COMBINATION_EVENT = "Combinada de habitación";
@@ -141,6 +143,7 @@ function routeRequest_(payload) {
       adminUpdateOdds: adminUpdateOdds_,
       adminUpdateCancelDeadline: adminUpdateCancelDeadline_,
       adminUpdateBetDeadline: adminUpdateBetDeadline_,
+      adminToggleSelfBet: adminToggleSelfBet_,
       adminCloseMarket: adminCloseMarket_,
       adminResolveMarket: adminResolveMarket_,
       adminCancelMarket: adminCancelMarket_,
@@ -172,7 +175,7 @@ function jsonOutput_(payload) {
 
 function register_(payload) {
   return withScriptLock_(function () {
-    const username = validateUsername_(payload.usuario);
+    const username = canonicalAllowedUsername_(validateUsername_(payload.usuario));
     const usersSheet = getSheet_(SHEETS.USERS);
     const users = getRowsAsObjects_(usersSheet);
 
@@ -180,33 +183,7 @@ function register_(payload) {
       throw new Error("Ese nombre de usuario ya está registrado.");
     }
 
-    const config = getConfigMap_();
-    const initialBalance = positiveNumber_(config.saldo_inicial, "El saldo inicial configurado");
-    const adminUser = String(config.admin_user || "Nico");
-    const role = normalizeKey_(username) === normalizeKey_(adminUser) ? "admin" : "user";
-    const now = new Date();
-    const user = {
-      id: nextId_(users),
-      usuario: username,
-      saldo: initialBalance,
-      rol: role,
-      fecha_registro: now,
-    };
-
-    usersSheet.appendRow([
-      user.id,
-      user.usuario,
-      user.saldo,
-      user.rol,
-      user.fecha_registro,
-    ]);
-    appendMovement_(
-      username,
-      "Registro",
-      initialBalance,
-      "Saldo inicial",
-      now,
-    );
+    const user = createAllowedUser_(usersSheet, users, username);
 
     return {
       data: { user: serializeUser_(user) },
@@ -216,8 +193,15 @@ function register_(payload) {
 }
 
 function login_(payload) {
-  const username = validateUsername_(payload.usuario);
-  const user = requireUser_(username);
+  const username = canonicalAllowedUsername_(validateUsername_(payload.usuario));
+  let user = findUser_(getRowsAsObjects_(getSheet_(SHEETS.USERS)), username);
+  if (!user) {
+    user = withScriptLock_(function () {
+      const usersSheet = getSheet_(SHEETS.USERS);
+      const users = getRowsAsObjects_(usersSheet);
+      return findUser_(users, username) || createAllowedUser_(usersSheet, users, username);
+    });
+  }
   return {
     data: { user: serializeUser_(user) },
     message: "Sesión iniciada.",
@@ -269,6 +253,7 @@ function getMarkets_() {
         fecha_creacion: toIso_(market.fecha_creacion),
         fecha_limite_cancelacion: toIso_(market.fecha_limite_cancelacion),
         fecha_limite_apuesta: toIso_(market.fecha_limite_apuesta),
+        permitir_apuesta_propia: boolean_(market.permitir_apuesta_propia),
         opciones: optionsByMarket[String(market.id)] || [],
       };
     })
@@ -283,7 +268,7 @@ function getMarkets_() {
 
 function placeBet_(payload) {
   return withScriptLock_(function () {
-    const username = validateUsername_(payload.usuario);
+    const username = canonicalAllowedUsername_(validateUsername_(payload.usuario));
     const marketId = requiredId_(payload.mercado_id, "mercado");
     const optionId = requiredId_(payload.opcion_id, "opción");
     const amount = positiveNumber_(payload.monto, "El monto");
@@ -318,6 +303,12 @@ function placeBet_(payload) {
       );
     });
     if (!option) throw new Error("La opción no existe o no pertenece al mercado.");
+    if (
+      !boolean_(market.permitir_apuesta_propia) &&
+      normalizeKey_(option.opcion) === normalizeKey_(username)
+    ) {
+      throw new Error("No podés apostar por vos mismo en este mercado.");
+    }
 
     const balance = number_(user.saldo);
     if (balance < amount) throw new Error("Saldo insuficiente.");
@@ -397,7 +388,7 @@ function placeBet_(payload) {
 
 function placeHabitacionCombinada_(payload) {
   return withScriptLock_(function () {
-    const username = validateUsername_(payload.usuario);
+    const username = canonicalAllowedUsername_(validateUsername_(payload.usuario));
     const countBetId = requiredId_(payload.apuesta_cantidad_id, "apuesta de cantidad");
     const amount = positiveNumber_(payload.monto, "El monto");
 
@@ -521,7 +512,7 @@ function placeHabitacionCombinada_(payload) {
 
 function cancelBet_(payload) {
   return withScriptLock_(function () {
-    const username = validateUsername_(payload.usuario);
+    const username = canonicalAllowedUsername_(validateUsername_(payload.usuario));
     const betId = requiredId_(payload.apuesta_id, "apuesta");
 
     const usersSheet = getSheet_(SHEETS.USERS);
@@ -750,7 +741,7 @@ function adminCreateMarket_(payload) {
     const sheet = getSheet_(SHEETS.MARKETS);
     const markets = getRowsAsObjects_(sheet);
     const id = nextId_(markets);
-    sheet.appendRow([id, category, event, type, "Abierto", new Date(), "", ""]);
+    sheet.appendRow([id, category, event, type, "Abierto", new Date(), "", "", false]);
     return {
       data: { market: { id: id, categoria: category, evento: event, tipo: type } },
       message: "Mercado creado correctamente.",
@@ -891,6 +882,31 @@ function adminUpdateBetDeadline_(payload) {
         fecha_limite_apuesta: deadline ? deadline.toISOString() : "",
       },
       message: "Fecha límite de apuestas actualizada.",
+    };
+  });
+}
+
+function adminToggleSelfBet_(payload) {
+  requireAdmin_(payload);
+  return withScriptLock_(function () {
+    const marketId = requiredId_(payload.mercado_id, "mercado");
+    const marketsSheet = getSheet_(SHEETS.MARKETS);
+    const market = requireMarket_(marketId, marketsSheet);
+    if (["Resuelto", "Cancelado"].includes(String(market.estado))) {
+      throw new Error("No se puede modificar la apuesta propia de un mercado finalizado.");
+    }
+
+    const allowSelfBet = boolean_(payload.permitir_apuesta_propia);
+    marketsSheet
+      .getRange(market._row, headerIndex_(marketsSheet, "permitir_apuesta_propia"))
+      .setValue(allowSelfBet);
+
+    return {
+      data: {
+        mercado_id: marketId,
+        permitir_apuesta_propia: allowSelfBet,
+      },
+      message: "Configuración de apuesta propia actualizada.",
     };
   });
 }
@@ -1303,25 +1319,25 @@ function seedConfig_() {
 function seedUsers_() {
   const usersSheet = getSheet_(SHEETS.USERS);
   const existing = getRowsAsObjects_(usersSheet);
-  if (existing.length) return;
-
   const initialBalance = number_(getConfigMap_().saldo_inicial) || 10000;
   const now = new Date();
-  const users = [
-    [1, "Nico", initialBalance, "admin", now],
-    [2, "Juanpi", initialBalance, "user", now],
-    [3, "Facu", initialBalance, "user", now],
-  ];
-  usersSheet.getRange(2, 1, users.length, users[0].length).setValues(users);
+  let nextUserId = nextId_(existing);
+  const userRows = [];
+  const movementRows = [];
 
-  const movementsSheet = getSheet_(SHEETS.MOVEMENTS);
-  if (!getRowsAsObjects_(movementsSheet).length) {
-    const movements = users.map(function (user, index) {
-      return [index + 1, user[1], "Registro", initialBalance, "Saldo inicial", now];
-    });
-    movementsSheet
-      .getRange(2, 1, movements.length, movements[0].length)
-      .setValues(movements);
+  ALLOWED_USERS.forEach(function (username) {
+    if (findUser_(existing, username)) return;
+    const role = normalizeKey_(username) === normalizeKey_("Nico") ? "admin" : "user";
+    userRows.push([nextUserId, username, initialBalance, role, now]);
+    movementRows.push([null, username, "Registro", initialBalance, "Saldo inicial", now]);
+    nextUserId += 1;
+  });
+
+  if (userRows.length) {
+    usersSheet
+      .getRange(usersSheet.getLastRow() + 1, 1, userRows.length, userRows[0].length)
+      .setValues(userRows);
+    appendMovementRows_(movementRows);
   }
 }
 
@@ -1352,6 +1368,7 @@ function seedMarketsAndOptions_() {
       now,
       "",
       "",
+      false,
     ]);
     definition.opciones.forEach(function (option) {
       optionRows.push([
@@ -1409,6 +1426,7 @@ function appendMarketDefinitionsIfMissing_(definitions) {
       now,
       "",
       "",
+      false,
     ]);
     definition.opciones.forEach(function (option) {
       optionRows.push([
@@ -1985,6 +2003,7 @@ function getSheet_(name) {
     ensureOptionalColumns_(sheet, [
       "fecha_limite_cancelacion",
       "fecha_limite_apuesta",
+      "permitir_apuesta_propia",
     ]);
   }
   return sheet;
@@ -1996,6 +2015,7 @@ function migrateCasinoSchema_(spreadsheet) {
     ensureOptionalColumns_(marketsSheet, [
       "fecha_limite_cancelacion",
       "fecha_limite_apuesta",
+      "permitir_apuesta_propia",
     ]);
   }
   ensureSheet_(spreadsheet, SHEETS.ROOM_COMBINATIONS, HEADERS.HabitacionCombinadas);
@@ -2113,9 +2133,10 @@ function getConfigMap_() {
 }
 
 function requireUser_(username) {
+  const canonicalUsername = canonicalAllowedUsername_(validateUsername_(username));
   const user = findUser_(
     getRowsAsObjects_(getSheet_(SHEETS.USERS)),
-    validateUsername_(username),
+    canonicalUsername,
   );
   if (!user) throw new Error("Usuario no encontrado.");
   return user;
@@ -2126,6 +2147,33 @@ function findUser_(users, username) {
   return users.find(function (user) {
     return normalizeKey_(user.usuario) === key;
   });
+}
+
+function canonicalAllowedUsername_(username) {
+  const key = normalizeKey_(username);
+  const allowedUsername = ALLOWED_USERS.find(function (allowed) {
+    return normalizeKey_(allowed) === key;
+  });
+  if (!allowedUsername) throw new Error("Usuario no habilitado para esta app.");
+  return allowedUsername;
+}
+
+function createAllowedUser_(usersSheet, users, username) {
+  const config = getConfigMap_();
+  const initialBalance = positiveNumber_(config.saldo_inicial, "El saldo inicial configurado");
+  const adminUser = String(config.admin_user || "Nico");
+  const now = new Date();
+  const user = {
+    id: nextId_(users),
+    usuario: username,
+    saldo: initialBalance,
+    rol: normalizeKey_(username) === normalizeKey_(adminUser) ? "admin" : "user",
+    fecha_registro: now,
+  };
+
+  usersSheet.appendRow([user.id, user.usuario, user.saldo, user.rol, user.fecha_registro]);
+  appendMovement_(username, "Registro", initialBalance, "Saldo inicial", now);
+  return user;
 }
 
 function requireMarket_(marketId, optionalSheet) {
@@ -2324,6 +2372,13 @@ function number_(value) {
   if (typeof value === "string") value = value.trim().replace(",", ".");
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function boolean_(value) {
+  if (value === true) return true;
+  if (value === false) return false;
+  const key = normalizeKey_(value);
+  return ["true", "si", "sí", "1", "yes"].includes(key);
 }
 
 function roundNumber_(value) {

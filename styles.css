@@ -846,12 +846,32 @@ label {
   opacity: 0.45;
 }
 
+.option-button.is-self-blocked {
+  border-color: rgba(212, 87, 87, 0.24);
+}
+
+.option-label {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
 .option-name {
   min-width: 0;
   overflow: hidden;
   color: #dce1dd;
   font-size: 0.96rem;
   font-weight: 680;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.option-hint {
+  min-width: 0;
+  overflow: hidden;
+  color: #d99090;
+  font-size: 0.74rem;
+  font-weight: 700;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1446,7 +1466,8 @@ label {
 }
 
 .admin-cancel-deadline-row,
-.admin-bet-deadline-row {
+.admin-bet-deadline-row,
+.admin-self-bet-row {
   display: grid;
   grid-template-columns: minmax(210px, 1fr) auto;
   align-items: end;
@@ -1454,6 +1475,16 @@ label {
   margin-bottom: 12px;
   border-bottom: 1px solid var(--line);
   padding-bottom: 12px;
+}
+
+.admin-self-bet-row {
+  align-items: center;
+}
+
+.admin-self-bet-row span {
+  color: #cfd5d0;
+  font-size: 0.89rem;
+  font-weight: 760;
 }
 
 .admin-option-row {
@@ -1788,6 +1819,7 @@ label {
   .admin-market-summary,
   .admin-cancel-deadline-row,
   .admin-bet-deadline-row,
+  .admin-self-bet-row,
   .admin-option-row,
   .admin-resolution {
     grid-template-columns: 1fr;

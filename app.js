@@ -439,7 +439,13 @@ function renderMarketCard(market) {
     optionMarkup = options.length
       ? options
           .map((option) =>
-            renderOptionButton(market, option, selectedId, acceptsBets && !fullyLocked),
+            renderOptionButton(
+              market,
+              option,
+              selectedId,
+              acceptsBets && !fullyLocked && !isSelfBetOption(market, option),
+              isSelfBetOption(market, option) ? "No podés apostar por vos mismo" : "",
+            ),
           )
           .join("")
       : '<p class="muted">Todavía no hay opciones cargadas.</p>';
@@ -646,17 +652,21 @@ function renderRoomCombinationPanel() {
   `;
 }
 
-function renderOptionButton(market, option, selectedId, enabled) {
+function renderOptionButton(market, option, selectedId, enabled, note = "") {
   const isSelected = selectedId === String(option.id);
   return `
     <button
-      class="option-button ${isSelected ? "is-selected" : ""}"
+      class="option-button ${isSelected ? "is-selected" : ""} ${note ? "is-self-blocked" : ""}"
       type="button"
       data-select-option="${escapeHtml(option.id)}"
       data-market-id="${escapeHtml(market.id)}"
+      ${note ? `title="${escapeHtml(note)}"` : ""}
       ${enabled ? "" : "disabled"}
     >
-      <span class="option-name">${escapeHtml(option.opcion)}</span>
+      <span class="option-label">
+        <span class="option-name">${escapeHtml(option.opcion)}</span>
+        ${note ? `<small class="option-hint">${escapeHtml(note)}</small>` : ""}
+      </span>
       <span class="odds">x${formatOdds(option.cuota)}</span>
     </button>
   `;
@@ -704,17 +714,23 @@ function renderOverUnderOptions(market, options, selectedId, isOpen, lockedSides
 }
 
 function renderOverUnderButton(market, option, selectedId, isOpen, lockedSides) {
-  const enabled = isOpen && !lockedSides.has(option.lado);
+  const selfBetBlocked = isSelfBetOption(market, option);
+  const note = selfBetBlocked ? "No podés apostar por vos mismo" : "";
+  const enabled = isOpen && !lockedSides.has(option.lado) && !selfBetBlocked;
   const isSelected = selectedId === String(option.id);
   return `
     <button
-      class="option-button ${isSelected ? "is-selected" : ""}"
+      class="option-button ${isSelected ? "is-selected" : ""} ${note ? "is-self-blocked" : ""}"
       type="button"
       data-select-option="${escapeHtml(option.id)}"
       data-market-id="${escapeHtml(market.id)}"
+      ${note ? `title="${escapeHtml(note)}"` : ""}
       ${enabled ? "" : "disabled"}
     >
-      <span class="option-name">${escapeHtml(option.lado)}</span>
+      <span class="option-label">
+        <span class="option-name">${escapeHtml(option.lado)}</span>
+        ${note ? `<small class="option-hint">${escapeHtml(note)}</small>` : ""}
+      </span>
       <span class="odds">x${formatOdds(option.cuota)}</span>
     </button>
   `;
@@ -809,6 +825,12 @@ async function handleMarketClick(event) {
 
   if (!optionId) {
     showToast("Elegí una opción antes de apostar.", "error");
+    return;
+  }
+  const market = state.markets.find((item) => String(item.id) === String(marketId));
+  const option = market?.opciones?.find((item) => String(item.id) === String(optionId));
+  if (market && option && isSelfBetOption(market, option)) {
+    showToast("No podés apostar por vos mismo en este mercado.", "error");
     return;
   }
   if (!Number.isFinite(monto) || monto <= 0) {
@@ -1191,6 +1213,7 @@ function renderAdminMarkets() {
     .map((market) => {
       const options = market.opciones || [];
       const actionable = !["Resuelto", "Cancelado"].includes(market.estado);
+      const selfBetAllowed = marketAllowsSelfBet(market);
       return `
         <div class="admin-market-item">
           <div class="admin-market-summary">
@@ -1254,6 +1277,18 @@ function renderAdminMarkets() {
                 ${actionable ? "" : "disabled"}
               >
                 Guardar límite de apuestas
+              </button>
+            </div>
+            <div class="admin-self-bet-row">
+              <span>Apuesta propia: ${selfBetAllowed ? "permitida" : "bloqueada"}</span>
+              <button
+                class="button button-secondary button-small"
+                type="button"
+                data-admin-toggle-self-bet="${escapeHtml(market.id)}"
+                data-admin-self-bet-next="${selfBetAllowed ? "false" : "true"}"
+                ${actionable ? "" : "disabled"}
+              >
+                ${selfBetAllowed ? "Bloquear apuesta propia" : "Permitir apuesta propia"}
               </button>
             </div>
             ${
@@ -1347,6 +1382,19 @@ async function handleAdminMarketClick(event) {
         fecha_limite_cancelacion: input.value,
       },
       "Fecha límite de cancelación actualizada.",
+    );
+    return;
+  }
+
+  const selfBetButton = event.target.closest("[data-admin-toggle-self-bet]");
+  if (selfBetButton) {
+    await runAdminAction(
+      "adminToggleSelfBet",
+      {
+        mercado_id: selfBetButton.dataset.adminToggleSelfBet,
+        permitir_apuesta_propia: selfBetButton.dataset.adminSelfBetNext === "true",
+      },
+      "Configuración de apuesta propia actualizada.",
     );
     return;
   }
@@ -1832,6 +1880,17 @@ function normalizeText(value) {
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
     .trim();
+}
+
+function marketAllowsSelfBet(market) {
+  return market?.permitir_apuesta_propia === true || String(market?.permitir_apuesta_propia).toLowerCase() === "true";
+}
+
+function isSelfBetOption(market, option) {
+  return (
+    !marketAllowsSelfBet(market) &&
+    normalizeText(option?.opcion) === normalizeText(state.user?.usuario)
+  );
 }
 
 function slugify(value) {

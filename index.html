@@ -33,7 +33,7 @@
         </div>
 
         <div class="auth-card">
-          <div class="auth-tabs" role="tablist" aria-label="Acceso">
+          <div class="auth-tabs is-hidden" role="tablist" aria-label="Acceso">
             <button
               class="auth-tab is-active"
               type="button"
@@ -56,25 +56,28 @@
 
           <form id="login-form" class="auth-form">
             <div>
-              <p class="eyebrow">Bienvenido de nuevo</p>
-              <h2>Entrá a la mesa</h2>
-              <p class="muted">Usá el mismo nombre con el que te registraste.</p>
+              <p class="eyebrow">Acceso habilitado</p>
+              <h2>Elegí tu usuario</h2>
+              <p class="muted">Seleccioná tu usuario habilitado para entrar.</p>
             </div>
             <label>
-              Nombre de usuario
-              <input
+              Usuario
+              <select
                 id="login-username"
                 name="usuario"
-                type="text"
                 autocomplete="username"
-                minlength="2"
-                maxlength="30"
-                placeholder="Ej: Juanpi"
                 required
-              />
+              >
+                <option value="">Elegí un usuario</option>
+                <option value="Capu">Capu</option>
+                <option value="Nico">Nico</option>
+                <option value="Juanpi">Juanpi</option>
+                <option value="Fran">Fran</option>
+                <option value="Jane">Jane</option>
+              </select>
             </label>
             <button class="button button-primary button-wide" type="submit">
-              Iniciar sesión
+              Entrar
             </button>
           </form>
 
@@ -86,16 +89,19 @@
             </div>
             <label>
               Elegí un nombre único
-              <input
+              <select
                 id="register-username"
                 name="usuario"
-                type="text"
                 autocomplete="username"
-                minlength="2"
-                maxlength="30"
-                placeholder="Ej: Facu"
                 required
-              />
+              >
+                <option value="">Elegí un usuario</option>
+                <option value="Capu">Capu</option>
+                <option value="Nico">Nico</option>
+                <option value="Juanpi">Juanpi</option>
+                <option value="Fran">Fran</option>
+                <option value="Jane">Jane</option>
+              </select>
             </label>
             <button class="button button-primary button-wide" type="submit">
               Crear cuenta
