@@ -760,6 +760,7 @@ label {
 }
 
 .status-cancelado,
+.status-bloqueada,
 .bet-status-devuelta {
   border-color: rgba(255, 255, 255, 0.12);
   background: rgba(255, 255, 255, 0.05);
@@ -935,10 +936,26 @@ label {
   grid-column: 1 / -1;
 }
 
+.room-combination-card.is-locked {
+  background: linear-gradient(145deg, rgba(18, 27, 23, 0.88), rgba(12, 19, 16, 0.9));
+}
+
 .room-combination-summary {
   margin: 10px 0 0;
   color: var(--muted);
   font-size: 0.93rem;
+  line-height: 1.45;
+}
+
+.room-combination-locked-message {
+  margin: 10px 0 0;
+  border: 1px solid rgba(218, 182, 99, 0.2);
+  border-radius: 8px;
+  background: rgba(218, 182, 99, 0.06);
+  color: #d8c38d;
+  padding: 10px 12px;
+  font-size: 0.93rem;
+  font-weight: 700;
   line-height: 1.45;
 }
 

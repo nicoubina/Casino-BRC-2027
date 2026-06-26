@@ -377,13 +377,31 @@ function renderMarkets() {
             <span class="market-count">${grouped[categoryName].length}</span>
           </div>
           <div class="market-grid">
-            ${grouped[categoryName].map(renderMarketCard).join("")}
-            ${categoryName === "Habitaciones" ? renderRoomCombinationPanel() : ""}
+            ${renderCategoryMarketCards(categoryName, grouped[categoryName])}
           </div>
         </section>
       `,
     )
     .join("");
+}
+
+function renderCategoryMarketCards(categoryName, markets) {
+  const cards = [];
+  let insertedRoomCombination = false;
+
+  markets.forEach((market) => {
+    cards.push(renderMarketCard(market));
+    if (categoryName === "Habitaciones" && isRoomCountMarket(market)) {
+      cards.push(renderRoomCombinationPanel());
+      insertedRoomCombination = true;
+    }
+  });
+
+  if (categoryName === "Habitaciones" && !insertedRoomCombination) {
+    cards.push(renderRoomCombinationPanel());
+  }
+
+  return cards.join("");
 }
 
 function renderMarketCard(market) {
@@ -489,87 +507,118 @@ function renderMarketCard(market) {
 function renderRoomCombinationPanel() {
   const countMarket = getRoomCountMarket();
   const countBet = getOpenRoomCountBet();
-  if (!countMarket || !countBet) return "";
+  if (!countMarket) return "";
 
-  const roomSize = parseRoomSizeFromText(countBet.opcion);
-  if (!roomSize) return "";
-
-  const requiredCompanions = roomSize - 1;
-  const selectedNames = getRoomSelection(countBet.id);
+  const roomSize = countBet ? parseRoomSizeFromText(countBet.opcion) : 0;
+  const requiredCompanions = roomSize ? roomSize - 1 : 0;
+  const selectedNames = countBet ? getRoomSelection(countBet.id) : [];
   const selectedKeys = new Set(selectedNames.map(normalizeText));
-  const existingCombination = state.roomCombinations.find(
-    (combination) =>
-      String(combination.apuesta_cantidad_id) === String(countBet.id) &&
-      combination.estado === "Abierta",
-  );
+  const existingCombination = countBet
+    ? state.roomCombinations.find(
+        (combination) =>
+          String(combination.apuesta_cantidad_id) === String(countBet.id) &&
+          combination.estado === "Abierta",
+      )
+    : null;
   const betDeadlineStatus = getBetDeadlineStatus(countMarket.fecha_limite_apuesta);
   const acceptsBets =
     countMarket.estado === "Abierto" &&
     (!betDeadlineStatus.exists ||
       (betDeadlineStatus.valid && !betDeadlineStatus.expired));
   const companionOdds = getCompanionOddsProduct(selectedNames);
-  const estimatedOdds = Number(countBet.cuota) * companionOdds;
+  const estimatedOdds = countBet ? Number(countBet.cuota) * companionOdds : 0;
+  const isUnlocked = Boolean(countBet && roomSize);
   const canSubmit =
+    isUnlocked &&
     acceptsBets &&
     !existingCombination &&
     selectedNames.length === requiredCompanions;
 
-  let lockMessage = "";
-  if (existingCombination) {
+  let lockMessage = "Primero apostá a la cantidad de personas de tu habitación para desbloquear la combinada.";
+  if (isUnlocked && existingCombination) {
     lockMessage = "Ya tenés una combinada abierta vinculada a esta apuesta.";
-  } else if (countMarket.estado !== "Abierto") {
+  } else if (isUnlocked && countMarket.estado !== "Abierto") {
     lockMessage = "El mercado de cantidad ya no está abierto.";
-  } else if (betDeadlineStatus.exists && betDeadlineStatus.expired) {
+  } else if (isUnlocked && betDeadlineStatus.exists && betDeadlineStatus.expired) {
     lockMessage = "Ya venció el plazo para apostar en este mercado.";
-  } else if (betDeadlineStatus.exists && !betDeadlineStatus.valid) {
+  } else if (isUnlocked && betDeadlineStatus.exists && !betDeadlineStatus.valid) {
     lockMessage = "La fecha límite de apuestas no es válida.";
+  } else if (isUnlocked) {
+    lockMessage = "";
   }
 
+  const statusLabel = existingCombination
+    ? existingCombination.estado
+    : isUnlocked
+      ? "Disponible"
+      : "Bloqueada";
+  const statusClass = existingCombination
+    ? slugify(existingCombination.estado)
+    : isUnlocked
+      ? "abierta"
+      : "bloqueada";
+
   return `
-    <article class="market-card room-combination-card">
+    <article class="market-card room-combination-card ${isUnlocked ? "" : "is-locked"}">
       <div class="market-card-head">
         <div class="market-meta">
           <span class="market-type">Habitación combinada</span>
-          <span class="status-badge status-${slugify(existingCombination ? existingCombination.estado : "Abierta")}">
-            ${escapeHtml(existingCombination ? existingCombination.estado : "Disponible")}
+          <span class="status-badge status-${statusClass}">
+            ${escapeHtml(statusLabel)}
           </span>
         </div>
         <h4>Combinada de habitación</h4>
-        <p class="room-combination-summary">
-          Elegiste habitación de ${escapeHtml(roomSize)} personas. Seleccioná exactamente ${escapeHtml(requiredCompanions)} compañeros.
-        </p>
+        ${
+          isUnlocked
+            ? `
+              <p class="room-combination-summary">
+                Elegiste habitación de ${escapeHtml(roomSize)} personas. Seleccioná exactamente ${escapeHtml(requiredCompanions)} compañeros.
+              </p>
+            `
+            : `
+              <p class="room-combination-locked-message">
+                Primero apostá a la cantidad de personas de tu habitación para desbloquear la combinada.
+              </p>
+            `
+        }
       </div>
 
-      <div class="room-combination-progress">
-        <span>${selectedNames.length}/${requiredCompanions} seleccionados</span>
-        <strong>Cuota estimada: x${formatOdds(estimatedOdds || countBet.cuota)}</strong>
-      </div>
+      ${
+        isUnlocked
+          ? `
+            <div class="room-combination-progress">
+              <span>${selectedNames.length}/${requiredCompanions} seleccionados</span>
+              <strong>Cuota estimada: x${formatOdds(estimatedOdds || countBet.cuota)}</strong>
+            </div>
 
-      <div class="companion-grid">
-        ${ROOM_COMPANIONS.map(([name, odds]) => {
-          const key = normalizeText(name);
-          const isSelected = selectedKeys.has(key);
-          const isSelf = key === normalizeText(state.user?.usuario);
-          const capReached = selectedNames.length >= requiredCompanions && !isSelected;
-          const disabled =
-            !acceptsBets ||
-            Boolean(existingCombination) ||
-            isSelf ||
-            capReached;
-          return `
-            <button
-              class="companion-button ${isSelected ? "is-selected" : ""}"
-              type="button"
-              data-room-companion="${escapeHtml(name)}"
-              data-room-count-bet="${escapeHtml(countBet.id)}"
-              ${disabled ? "disabled" : ""}
-            >
-              <span>${escapeHtml(name)}</span>
-              <strong>x${formatOdds(odds)}</strong>
-            </button>
-          `;
-        }).join("")}
-      </div>
+            <div class="companion-grid">
+              ${ROOM_COMPANIONS.map(([name, odds]) => {
+                const key = normalizeText(name);
+                const isSelected = selectedKeys.has(key);
+                const isSelf = key === normalizeText(state.user?.usuario);
+                const capReached = selectedNames.length >= requiredCompanions && !isSelected;
+                const disabled =
+                  !acceptsBets ||
+                  Boolean(existingCombination) ||
+                  isSelf ||
+                  capReached;
+                return `
+                  <button
+                    class="companion-button ${isSelected ? "is-selected" : ""}"
+                    type="button"
+                    data-room-companion="${escapeHtml(name)}"
+                    data-room-count-bet="${escapeHtml(countBet.id)}"
+                    ${disabled ? "disabled" : ""}
+                  >
+                    <span>${escapeHtml(name)}</span>
+                    <strong>x${formatOdds(odds)}</strong>
+                  </button>
+                `;
+              }).join("")}
+            </div>
+          `
+          : ""
+      }
 
       <div class="room-combination-footer">
         <input
@@ -580,18 +629,18 @@ function renderRoomCombinationPanel() {
           inputmode="decimal"
           placeholder="Monto"
           aria-label="Monto de la combinada"
-          data-room-combination-amount="${escapeHtml(countBet.id)}"
-          ${acceptsBets && !existingCombination ? "" : "disabled"}
+          data-room-combination-amount="${escapeHtml(countBet?.id || "")}"
+          ${isUnlocked && acceptsBets && !existingCombination ? "" : "disabled"}
         />
         <button
           class="button button-primary"
           type="button"
-          data-place-room-combination="${escapeHtml(countBet.id)}"
+          data-place-room-combination="${escapeHtml(countBet?.id || "")}"
           ${canSubmit ? "" : "disabled"}
         >
           Apostar combinada
         </button>
-        ${lockMessage ? `<p class="market-lock-message">${escapeHtml(lockMessage)}</p>` : ""}
+        ${lockMessage && isUnlocked ? `<p class="market-lock-message">${escapeHtml(lockMessage)}</p>` : ""}
       </div>
     </article>
   `;
