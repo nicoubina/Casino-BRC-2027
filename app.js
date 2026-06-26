@@ -1883,7 +1883,10 @@ function normalizeText(value) {
 }
 
 function marketAllowsSelfBet(market) {
-  return market?.permitir_apuesta_propia === true || String(market?.permitir_apuesta_propia).toLowerCase() === "true";
+  if (market?.permitir_apuesta_propia === true) return true;
+  if (market?.permitir_apuesta_propia === false) return false;
+  const value = normalizeText(market?.permitir_apuesta_propia);
+  return ["true", "si", "1", "yes"].includes(value);
 }
 
 function isSelfBetOption(market, option) {

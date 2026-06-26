@@ -151,7 +151,7 @@ function routeRequest_(payload) {
       adminResolveHabitacionCombinadas: adminResolveHabitacionCombinadas_,
     };
 
-    if (!handlers[action]) throw new Error("Acción no reconocida.");
+    if (!handlers[action]) throw new Error("Acción " + action + " no reconocida.");
     const result = handlers[action](payload) || {};
     return jsonOutput_({
       success: true,
@@ -897,8 +897,14 @@ function adminToggleSelfBet_(payload) {
     }
 
     const allowSelfBet = boolean_(payload.permitir_apuesta_propia);
+    let selfBetColumn = 0;
+    try {
+      selfBetColumn = headerIndex_(marketsSheet, "permitir_apuesta_propia");
+    } catch (_error) {
+      throw new Error("No se encontró la columna permitir_apuesta_propia.");
+    }
     marketsSheet
-      .getRange(market._row, headerIndex_(marketsSheet, "permitir_apuesta_propia"))
+      .getRange(market._row, selfBetColumn)
       .setValue(allowSelfBet);
 
     return {
