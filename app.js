@@ -5,17 +5,46 @@ const API_URL = "https://script.google.com/macros/s/AKfycby_ZdrJDTGVAT-lB9yLComJ
 
 const SESSION_KEY = "casino_brc_session";
 const ADMIN_TOKEN_KEY = "casino_brc_admin_token";
-const CATEGORIES = ["Viaje", "Wachineadas", "Quebrados", "Minas", "Peleas", "Especiales"];
+const CATEGORIES = ["Viaje", "Habitaciones", "Wachineadas", "Quebrados", "Minas", "Peleas", "Especiales"];
+const ROOM_COUNT_EVENT = "¿Cuántas personas habrá en tu habitación?";
+const ROOM_COMPANIONS = [
+  ["Romi", 1.4],
+  ["Nico", 1.4],
+  ["Juanpi", 1.4],
+  ["Fran", 1.4],
+  ["Jane", 1.4],
+  ["Facu", 1.4],
+  ["Nachón", 1.4],
+  ["Joaco", 1.4],
+  ["Gonza Boca", 1.4],
+  ["Gonza R", 1.4],
+  ["Ivi", 1.4],
+  ["Dante", 1.4],
+  ["Rocco", 1.4],
+  ["Biglia", 1.4],
+  ["Jesús", 1.4],
+  ["Perrito Barrios", 7],
+  ["Abelle", 6],
+  ["Pipita", 3],
+  ["Rocío", 15],
+  ["Nico F", 15],
+  ["Mathi Budani", 15],
+  ["Mateo", 15],
+  ["Nachito Pineda", 15],
+];
 
 const state = {
   user: null,
   markets: [],
   bets: [],
+  roomCombinations: [],
   balanceRanking: [],
   winningsRanking: [],
   movements: [],
   adminBets: [],
+  adminRoomCombinations: [],
   selectedOptions: {},
+  roomSelections: {},
   betStatus: "Todas",
   currentView: "markets",
   loadingCount: 0,
@@ -132,6 +161,7 @@ function bindEvents() {
   elements.createMarketForm.addEventListener("submit", handleCreateMarket);
   elements.createOptionForm.addEventListener("submit", handleCreateOption);
   elements.adminMarketsContainer.addEventListener("click", handleAdminMarketClick);
+  elements.adminBetsContainer.addEventListener("click", handleAdminBetsClick);
 
   elements.mobileMenuButton.addEventListener("click", toggleSidebar);
   elements.sidebarBackdrop.addEventListener("click", closeSidebar);
@@ -185,8 +215,11 @@ function logout() {
   state.user = null;
   state.markets = [];
   state.bets = [];
+  state.roomCombinations = [];
+  state.adminRoomCombinations = [];
   state.movements = [];
   state.selectedOptions = {};
+  state.roomSelections = {};
   elements.loginForm.reset();
   elements.registerForm.reset();
   showAuth();
@@ -253,6 +286,7 @@ async function refreshAll() {
     state.user = userData.user;
     state.markets = markets.markets || [];
     state.bets = bets.bets || [];
+    state.roomCombinations = bets.habitacion_combinadas || [];
     state.balanceRanking = balanceRanking.ranking || [];
     state.winningsRanking = winningsRanking.ranking || [];
     state.movements = movements.movements || [];
@@ -344,6 +378,7 @@ function renderMarkets() {
           </div>
           <div class="market-grid">
             ${grouped[categoryName].map(renderMarketCard).join("")}
+            ${categoryName === "Habitaciones" ? renderRoomCombinationPanel() : ""}
           </div>
         </section>
       `,
@@ -451,6 +486,117 @@ function renderMarketCard(market) {
   `;
 }
 
+function renderRoomCombinationPanel() {
+  const countMarket = getRoomCountMarket();
+  const countBet = getOpenRoomCountBet();
+  if (!countMarket || !countBet) return "";
+
+  const roomSize = parseRoomSizeFromText(countBet.opcion);
+  if (!roomSize) return "";
+
+  const requiredCompanions = roomSize - 1;
+  const selectedNames = getRoomSelection(countBet.id);
+  const selectedKeys = new Set(selectedNames.map(normalizeText));
+  const existingCombination = state.roomCombinations.find(
+    (combination) =>
+      String(combination.apuesta_cantidad_id) === String(countBet.id) &&
+      combination.estado === "Abierta",
+  );
+  const betDeadlineStatus = getBetDeadlineStatus(countMarket.fecha_limite_apuesta);
+  const acceptsBets =
+    countMarket.estado === "Abierto" &&
+    (!betDeadlineStatus.exists ||
+      (betDeadlineStatus.valid && !betDeadlineStatus.expired));
+  const companionOdds = getCompanionOddsProduct(selectedNames);
+  const estimatedOdds = Number(countBet.cuota) * companionOdds;
+  const canSubmit =
+    acceptsBets &&
+    !existingCombination &&
+    selectedNames.length === requiredCompanions;
+
+  let lockMessage = "";
+  if (existingCombination) {
+    lockMessage = "Ya tenés una combinada abierta vinculada a esta apuesta.";
+  } else if (countMarket.estado !== "Abierto") {
+    lockMessage = "El mercado de cantidad ya no está abierto.";
+  } else if (betDeadlineStatus.exists && betDeadlineStatus.expired) {
+    lockMessage = "Ya venció el plazo para apostar en este mercado.";
+  } else if (betDeadlineStatus.exists && !betDeadlineStatus.valid) {
+    lockMessage = "La fecha límite de apuestas no es válida.";
+  }
+
+  return `
+    <article class="market-card room-combination-card">
+      <div class="market-card-head">
+        <div class="market-meta">
+          <span class="market-type">Habitación combinada</span>
+          <span class="status-badge status-${slugify(existingCombination ? existingCombination.estado : "Abierta")}">
+            ${escapeHtml(existingCombination ? existingCombination.estado : "Disponible")}
+          </span>
+        </div>
+        <h4>Combinada de habitación</h4>
+        <p class="room-combination-summary">
+          Elegiste habitación de ${escapeHtml(roomSize)} personas. Seleccioná exactamente ${escapeHtml(requiredCompanions)} compañeros.
+        </p>
+      </div>
+
+      <div class="room-combination-progress">
+        <span>${selectedNames.length}/${requiredCompanions} seleccionados</span>
+        <strong>Cuota estimada: x${formatOdds(estimatedOdds || countBet.cuota)}</strong>
+      </div>
+
+      <div class="companion-grid">
+        ${ROOM_COMPANIONS.map(([name, odds]) => {
+          const key = normalizeText(name);
+          const isSelected = selectedKeys.has(key);
+          const isSelf = key === normalizeText(state.user?.usuario);
+          const capReached = selectedNames.length >= requiredCompanions && !isSelected;
+          const disabled =
+            !acceptsBets ||
+            Boolean(existingCombination) ||
+            isSelf ||
+            capReached;
+          return `
+            <button
+              class="companion-button ${isSelected ? "is-selected" : ""}"
+              type="button"
+              data-room-companion="${escapeHtml(name)}"
+              data-room-count-bet="${escapeHtml(countBet.id)}"
+              ${disabled ? "disabled" : ""}
+            >
+              <span>${escapeHtml(name)}</span>
+              <strong>x${formatOdds(odds)}</strong>
+            </button>
+          `;
+        }).join("")}
+      </div>
+
+      <div class="room-combination-footer">
+        <input
+          type="number"
+          min="1"
+          max="${Number(state.user?.saldo || 0)}"
+          step="1"
+          inputmode="decimal"
+          placeholder="Monto"
+          aria-label="Monto de la combinada"
+          data-room-combination-amount="${escapeHtml(countBet.id)}"
+          ${acceptsBets && !existingCombination ? "" : "disabled"}
+        />
+        <button
+          class="button button-primary"
+          type="button"
+          data-place-room-combination="${escapeHtml(countBet.id)}"
+          ${canSubmit ? "" : "disabled"}
+        >
+          Apostar combinada
+        </button>
+        ${lockMessage ? `<p class="market-lock-message">${escapeHtml(lockMessage)}</p>` : ""}
+      </div>
+    </article>
+  `;
+}
+
 function renderOptionButton(market, option, selectedId, enabled) {
   const isSelected = selectedId === String(option.id);
   return `
@@ -526,6 +672,74 @@ function renderOverUnderButton(market, option, selectedId, isOpen, lockedSides) 
 }
 
 async function handleMarketClick(event) {
+  const companionButton = event.target.closest("[data-room-companion]");
+  if (companionButton) {
+    const betId = companionButton.dataset.roomCountBet;
+    const companion = companionButton.dataset.roomCompanion;
+    const countBet = state.bets.find((bet) => String(bet.id) === String(betId));
+    const roomSize = parseRoomSizeFromText(countBet?.opcion);
+    const requiredCompanions = roomSize ? roomSize - 1 : 0;
+    const current = getRoomSelection(betId);
+    const key = normalizeText(companion);
+    const exists = current.some((name) => normalizeText(name) === key);
+
+    if (exists) {
+      state.roomSelections[betId] = current.filter((name) => normalizeText(name) !== key);
+    } else if (current.length < requiredCompanions) {
+      state.roomSelections[betId] = [...current, companion];
+    }
+    renderMarkets();
+    return;
+  }
+
+  const roomCombinationButton = event.target.closest("[data-place-room-combination]");
+  if (roomCombinationButton) {
+    const betId = roomCombinationButton.dataset.placeRoomCombination;
+    const countBet = state.bets.find((bet) => String(bet.id) === String(betId));
+    const roomSize = parseRoomSizeFromText(countBet?.opcion);
+    const requiredCompanions = roomSize ? roomSize - 1 : 0;
+    const companions = getRoomSelection(betId);
+    const amountInput = elements.marketsContainer.querySelector(
+      `[data-room-combination-amount="${cssEscape(betId)}"]`,
+    );
+    const monto = Number(amountInput?.value);
+
+    if (!countBet || countBet.estado !== "Abierta") {
+      showToast("Primero necesitás una apuesta abierta a la cantidad de personas.", "error");
+      return;
+    }
+    if (companions.length !== requiredCompanions) {
+      showToast(`Seleccioná exactamente ${requiredCompanions} compañeros.`, "error");
+      return;
+    }
+    if (!Number.isFinite(monto) || monto <= 0) {
+      showToast("Ingresá un monto mayor a cero.", "error");
+      return;
+    }
+    if (monto > Number(state.user?.saldo || 0)) {
+      showToast("Saldo insuficiente.", "error");
+      return;
+    }
+
+    try {
+      setLoading(true);
+      const data = await callApi("placeHabitacionCombinada", {
+        usuario: state.user.usuario,
+        apuesta_cantidad_id: betId,
+        companeros: companions,
+        monto,
+      });
+      delete state.roomSelections[betId];
+      showToast(data.message || "Combinada registrada.", "success");
+      await refreshAll();
+    } catch (error) {
+      showToast(error.message, "error");
+    } finally {
+      setLoading(false);
+    }
+    return;
+  }
+
   const optionButton = event.target.closest("[data-select-option]");
   if (optionButton) {
     const marketId = optionButton.dataset.marketId;
@@ -571,18 +785,43 @@ async function handleMarketClick(event) {
   }
 }
 
+function getDisplayBets() {
+  const normalBets = state.bets.map((bet) => ({
+    ...bet,
+    tipo_apuesta: bet.tipo_apuesta || "NORMAL",
+    cuota: Number(bet.cuota),
+  }));
+  const roomCombinationBets = state.roomCombinations.map((combination) => ({
+    ...combination,
+    id: `habitacion-${combination.id}`,
+    raw_id: combination.id,
+    mercado_id: combination.mercado_cantidad_id,
+    evento: combination.evento || "Combinada de habitación",
+    opcion:
+      combination.opcion ||
+      `${combination.cantidad_personas} personas · ${combination.companeros_text || ""}`,
+    cuota: Number(combination.cuota_total),
+    tipo_apuesta: "HABITACION_COMBINADA",
+  }));
+
+  return [...normalBets, ...roomCombinationBets].sort(
+    (a, b) => new Date(b.fecha || 0).getTime() - new Date(a.fecha || 0).getTime(),
+  );
+}
+
 function renderBets() {
+  const displayBets = getDisplayBets();
   const statusCounts = {
     Abierta: 0,
     Ganada: 0,
     Perdida: 0,
     Devuelta: 0,
   };
-  state.bets.forEach((bet) => {
+  displayBets.forEach((bet) => {
     if (statusCounts[bet.estado] !== undefined) statusCounts[bet.estado] += 1;
   });
 
-  const potential = state.bets
+  const potential = displayBets
     .filter((bet) => bet.estado === "Abierta")
     .reduce((sum, bet) => sum + Number(bet.monto) * Number(bet.cuota), 0);
 
@@ -604,8 +843,8 @@ function renderBets() {
 
   const filtered =
     state.betStatus === "Todas"
-      ? state.bets
-      : state.bets.filter((bet) => bet.estado === state.betStatus);
+      ? displayBets
+      : displayBets.filter((bet) => bet.estado === state.betStatus);
 
   if (!filtered.length) {
     elements.betsContainer.innerHTML = emptyState(
@@ -617,15 +856,21 @@ function renderBets() {
 
   elements.betsContainer.innerHTML = filtered
     .map((bet) => {
+      const isRoomCombination = bet.tipo_apuesta === "HABITACION_COMBINADA";
       const potentialPayment = Number(bet.monto) * Number(bet.cuota);
       const market = state.markets.find(
-        (item) => String(item.id) === String(bet.mercado_id),
+        (item) =>
+          String(item.id) ===
+          String(isRoomCombination ? bet.mercado_cantidad_id : bet.mercado_id),
       );
       const deadlineStatus = getCancelDeadlineStatus(
         market?.fecha_limite_cancelacion,
       );
       const otherwiseCancelable =
-        bet.estado === "Abierta" && market && market.estado === "Abierto";
+        !isRoomCombination &&
+        bet.estado === "Abierta" &&
+        market &&
+        market.estado === "Abierto";
       const canCancel =
         otherwiseCancelable &&
         (!deadlineStatus.exists ||
@@ -647,7 +892,7 @@ function renderBets() {
             <strong>${formatChips(bet.monto)}</strong>
           </div>
           <div class="bet-metric">
-            <span>Cuota</span>
+            <span>${isRoomCombination ? "Cuota total" : "Cuota"}</span>
             <strong>x${formatOdds(bet.cuota)}</strong>
           </div>
           <div class="bet-metric">
@@ -680,6 +925,11 @@ function renderBets() {
                       ${deadlineStatus.expired ? "Venció el plazo de cancelación" : "Fecha límite inválida"}
                     </small>
                   `
+                : ""
+            }
+            ${
+              isRoomCombination && bet.estado === "Abierta"
+                ? '<small class="cancel-disabled-reason">Se devuelve si cancelás la apuesta de cantidad vinculada.</small>'
                 : ""
             }
           </div>
@@ -822,6 +1072,7 @@ async function refreshAdminData() {
       admin_token: token,
     });
     state.adminBets = data.bets || [];
+    state.adminRoomCombinations = data.habitacion_combinadas || [];
     renderAdminMarkets();
     renderAdminBets();
   } catch (error) {
@@ -1134,7 +1385,7 @@ async function runAdminAction(action, payload, successMessage) {
 }
 
 function renderAdminBets() {
-  if (!state.adminBets.length) {
+  if (!state.adminBets.length && !state.adminRoomCombinations.length) {
     elements.adminBetsContainer.innerHTML = emptyState(
       "Todavía no hay apuestas",
       "Las apuestas de todos los usuarios aparecerán acá.",
@@ -1142,40 +1393,148 @@ function renderAdminBets() {
     return;
   }
 
+  const normalBetsTable = state.adminBets.length
+    ? `
+      <div class="data-table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Usuario</th>
+              <th>Mercado</th>
+              <th>Opción</th>
+              <th>Monto</th>
+              <th>Cuota</th>
+              <th>Estado</th>
+              <th>Fecha</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${state.adminBets
+              .map(
+                (bet) => `
+                  <tr>
+                    <td>${escapeHtml(bet.usuario)}</td>
+                    <td>${escapeHtml(bet.evento || `#${bet.mercado_id}`)}</td>
+                    <td>${escapeHtml(bet.opcion)}</td>
+                    <td>${formatChips(bet.monto)}</td>
+                    <td>x${formatOdds(bet.cuota)}</td>
+                    <td><span class="bet-status bet-status-${slugify(bet.estado)}">${escapeHtml(bet.estado)}</span></td>
+                    <td>${formatDate(bet.fecha)}</td>
+                  </tr>
+                `,
+              )
+              .join("")}
+          </tbody>
+        </table>
+      </div>
+    `
+    : emptyState("Sin apuestas normales", "Las apuestas simples aparecerán acá.");
+
   elements.adminBetsContainer.innerHTML = `
-    <div class="data-table-wrap">
-      <table class="data-table">
-        <thead>
-          <tr>
-            <th>Usuario</th>
-            <th>Mercado</th>
-            <th>Opción</th>
-            <th>Monto</th>
-            <th>Cuota</th>
-            <th>Estado</th>
-            <th>Fecha</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${state.adminBets
-            .map(
-              (bet) => `
-                <tr>
-                  <td>${escapeHtml(bet.usuario)}</td>
-                  <td>${escapeHtml(bet.evento || `#${bet.mercado_id}`)}</td>
-                  <td>${escapeHtml(bet.opcion)}</td>
-                  <td>${formatChips(bet.monto)}</td>
-                  <td>x${formatOdds(bet.cuota)}</td>
-                  <td><span class="bet-status bet-status-${slugify(bet.estado)}">${escapeHtml(bet.estado)}</span></td>
-                  <td>${formatDate(bet.fecha)}</td>
-                </tr>
-              `,
-            )
-            .join("")}
-        </tbody>
-      </table>
-    </div>
+    ${normalBetsTable}
+    ${renderAdminRoomCombinations()}
   `;
+}
+
+function renderAdminRoomCombinations() {
+  const openCount = state.adminRoomCombinations.filter(
+    (combination) => combination.estado === "Abierta",
+  ).length;
+  const tableMarkup = state.adminRoomCombinations.length
+    ? `
+      <div class="data-table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Usuario</th>
+              <th>Cantidad</th>
+              <th>Compañeros</th>
+              <th>Monto</th>
+              <th>Cuota total</th>
+              <th>Estado</th>
+              <th>Fecha</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${state.adminRoomCombinations
+              .map(
+                (combination) => `
+                  <tr>
+                    <td>${escapeHtml(combination.usuario)}</td>
+                    <td>${escapeHtml(combination.cantidad_personas)} personas</td>
+                    <td>${escapeHtml(combination.companeros_text || "")}</td>
+                    <td>${formatChips(combination.monto)}</td>
+                    <td>x${formatOdds(combination.cuota_total)}</td>
+                    <td><span class="bet-status bet-status-${slugify(combination.estado)}">${escapeHtml(combination.estado)}</span></td>
+                    <td>${formatDate(combination.fecha)}</td>
+                  </tr>
+                `,
+              )
+              .join("")}
+          </tbody>
+        </table>
+      </div>
+    `
+    : emptyState("Sin combinadas de habitación", "Aparecerán cuando alguien apueste una combinada.");
+
+  return `
+    <section class="admin-room-combinations">
+      <div class="admin-room-heading">
+        <div>
+          <h4>Combinadas de habitación</h4>
+          <small>${openCount} abiertas</small>
+        </div>
+      </div>
+      <div class="admin-room-resolve">
+        <label>
+          Cantidad real
+          <input data-admin-room-real-count type="number" min="3" max="10" step="1" placeholder="5" ${openCount ? "" : "disabled"} />
+        </label>
+        <label>
+          Compañeros reales
+          <textarea data-admin-room-real-companions rows="2" placeholder="Nico, Juanpi, Fran, Pipita" ${openCount ? "" : "disabled"}></textarea>
+        </label>
+        <button
+          class="button button-primary button-small"
+          type="button"
+          data-admin-resolve-room-combinations
+          ${openCount ? "" : "disabled"}
+        >
+          Resolver combinadas
+        </button>
+      </div>
+      ${tableMarkup}
+    </section>
+  `;
+}
+
+async function handleAdminBetsClick(event) {
+  const resolveButton = event.target.closest("[data-admin-resolve-room-combinations]");
+  if (!resolveButton) return;
+
+  const countInput = elements.adminBetsContainer.querySelector("[data-admin-room-real-count]");
+  const companionsInput = elements.adminBetsContainer.querySelector("[data-admin-room-real-companions]");
+  const count = Number(countInput?.value);
+  const companions = companionsInput?.value.trim() || "";
+
+  if (!Number.isInteger(count) || count < 3 || count > 10) {
+    showToast("Ingresá una cantidad real entre 3 y 10.", "error");
+    return;
+  }
+  if (!companions) {
+    showToast("Ingresá la lista real de compañeros.", "error");
+    return;
+  }
+  if (!window.confirm("¿Resolver todas las combinadas abiertas de habitación?")) return;
+
+  await runAdminAction(
+    "adminResolveHabitacionCombinadas",
+    {
+      cantidad_real: count,
+      companeros_reales: companions,
+    },
+    "Combinadas de habitación resueltas.",
+  );
 }
 
 async function callApi(action, payload = {}) {
@@ -1245,6 +1604,45 @@ function toggleSidebar() {
 function closeSidebar() {
   elements.sidebar.classList.remove("is-open");
   elements.sidebarBackdrop.classList.remove("is-visible");
+}
+
+function getRoomCountMarket() {
+  return state.markets.find(isRoomCountMarket);
+}
+
+function isRoomCountMarket(market) {
+  return (
+    normalizeText(market?.categoria) === normalizeText("Habitaciones") &&
+    normalizeText(market?.evento) === normalizeText(ROOM_COUNT_EVENT)
+  );
+}
+
+function getOpenRoomCountBet() {
+  const countMarket = getRoomCountMarket();
+  if (!countMarket) return null;
+  return state.bets.find(
+    (bet) =>
+      String(bet.mercado_id) === String(countMarket.id) &&
+      bet.estado === "Abierta",
+  );
+}
+
+function parseRoomSizeFromText(value) {
+  const match = String(value || "").match(/\d+/);
+  return match ? Number(match[0]) : 0;
+}
+
+function getRoomSelection(betId) {
+  return state.roomSelections[betId] || [];
+}
+
+function getCompanionOddsProduct(names) {
+  return names.reduce((product, name) => {
+    const companion = ROOM_COMPANIONS.find(
+      ([companionName]) => normalizeText(companionName) === normalizeText(name),
+    );
+    return product * Number(companion?.[1] || 1);
+  }, 1);
 }
 
 function emptyState(title, message) {
@@ -1374,6 +1772,7 @@ function formatMarketType(type) {
       SI_NO: "Sí / No",
       NOMBRE: "Opción / Nombre",
       OVER_UNDER: "Más / Menos",
+      HABITACION_COMBINADA: "Habitación combinada",
     }[type] || type
   );
 }
