@@ -130,7 +130,6 @@ function routeRequest_(payload) {
       getConfig: getPublicConfig_,
       getUserData: getUserData_,
       getMarkets: getMarkets_,
-      getDashboardData: getDashboardData_,
       placeBet: placeBet_,
       placeHabitacionCombinada: placeHabitacionCombinada_,
       cancelBet: cancelBet_,
@@ -227,38 +226,6 @@ function getUserData_(payload) {
 function getMarkets_() {
   const markets = getRowsAsObjects_(getSheet_(SHEETS.MARKETS));
   const options = getRowsAsObjects_(getSheet_(SHEETS.OPTIONS));
-  return { markets: buildMarketsPayload_(markets, options) };
-}
-
-function getDashboardData_(payload) {
-  payload = payload || {};
-  if (!payload.usuario) throw new Error("Falta el usuario.");
-  const username = canonicalAllowedUsername_(validateUsername_(payload.usuario));
-
-  const users = getRowsAsObjects_(getSheet_(SHEETS.USERS));
-  const user = findUser_(users, username);
-  if (!user) throw new Error("Usuario no encontrado.");
-
-  const markets = getRowsAsObjects_(getSheet_(SHEETS.MARKETS));
-  const options = getRowsAsObjects_(getSheet_(SHEETS.OPTIONS));
-  const bets = getRowsAsObjects_(getSheet_(SHEETS.BETS));
-  const roomCombinations = getRowsAsObjects_(getRoomCombinationsSheet_());
-  const movements = getRowsAsObjects_(getSheet_(SHEETS.MOVEMENTS));
-  const marketMap = buildMarketMap_(markets);
-  const userBets = buildUserBetsPayload_(username, bets, roomCombinations, marketMap);
-
-  return {
-    userData: serializeUser_(user),
-    markets: buildMarketsPayload_(markets, options),
-    bets: userBets.bets,
-    roomCombinations: userBets.habitacion_combinadas,
-    balanceRanking: buildBalanceRanking_(users),
-    winningsRanking: buildWinningsRanking_(users, movements),
-    movements: buildMovementsPayload_(username, movements),
-  };
-}
-
-function buildMarketsPayload_(markets, options) {
   const optionsByMarket = {};
 
   options.forEach(function (option) {
@@ -296,7 +263,7 @@ function buildMarketsPayload_(markets, options) {
       return categoryDifference || number_(a.id) - number_(b.id);
     });
 
-  return result;
+  return { markets: result };
 }
 
 function placeBet_(payload) {
@@ -650,22 +617,12 @@ function getMyBets_(payload) {
   const username = validateUsername_(payload.usuario);
   requireUser_(username);
   const markets = getRowsAsObjects_(getSheet_(SHEETS.MARKETS));
-  const marketMap = buildMarketMap_(markets);
-  const bets = getRowsAsObjects_(getSheet_(SHEETS.BETS));
-  const roomCombinations = getRowsAsObjects_(getRoomCombinationsSheet_());
-  return buildUserBetsPayload_(username, bets, roomCombinations, marketMap);
-}
-
-function buildMarketMap_(markets) {
   const marketMap = {};
   markets.forEach(function (market) {
     marketMap[String(market.id)] = market;
   });
-  return marketMap;
-}
 
-function buildUserBetsPayload_(username, bets, roomCombinations, marketMap) {
-  const userBets = bets
+  const bets = getRowsAsObjects_(getSheet_(SHEETS.BETS))
     .filter(function (bet) {
       return normalizeKey_(bet.usuario) === normalizeKey_(username);
     })
@@ -674,37 +631,29 @@ function buildUserBetsPayload_(username, bets, roomCombinations, marketMap) {
     })
     .sort(sortByDateDesc_);
 
-  const userRoomCombinations = roomCombinations
+  const roomCombinations = getRowsAsObjects_(getRoomCombinationsSheet_())
     .filter(function (combination) {
       return normalizeKey_(combination.usuario) === normalizeKey_(username);
     })
     .map(serializeRoomCombination_)
     .sort(sortByDateDesc_);
 
-  return { bets: userBets, habitacion_combinadas: userRoomCombinations };
+  return { bets: bets, habitacion_combinadas: roomCombinations };
 }
 
 function getBalanceRanking_() {
-  return { ranking: buildBalanceRanking_(getRowsAsObjects_(getSheet_(SHEETS.USERS))) };
-}
-
-function buildBalanceRanking_(users) {
-  return users
+  const ranking = getRowsAsObjects_(getSheet_(SHEETS.USERS))
     .map(function (user) {
       return { usuario: String(user.usuario), saldo: number_(user.saldo) };
     })
     .sort(function (a, b) {
       return b.saldo - a.saldo || a.usuario.localeCompare(b.usuario);
     });
+  return { ranking: ranking };
 }
 
 function getWinningsRanking_() {
   const users = getRowsAsObjects_(getSheet_(SHEETS.USERS));
-  const movements = getRowsAsObjects_(getSheet_(SHEETS.MOVEMENTS));
-  return { ranking: buildWinningsRanking_(users, movements) };
-}
-
-function buildWinningsRanking_(users, movements) {
   const totals = {};
   users.forEach(function (user) {
     totals[normalizeKey_(user.usuario)] = {
@@ -713,7 +662,7 @@ function buildWinningsRanking_(users, movements) {
     };
   });
 
-  movements.forEach(function (movement) {
+  getRowsAsObjects_(getSheet_(SHEETS.MOVEMENTS)).forEach(function (movement) {
     if (String(movement.tipo) !== "Ganancia") return;
     const key = normalizeKey_(movement.usuario);
     if (!totals[key]) {
@@ -731,17 +680,13 @@ function buildWinningsRanking_(users, movements) {
     .sort(function (a, b) {
       return b.ganancias - a.ganancias || a.usuario.localeCompare(b.usuario);
     });
-  return ranking;
+  return { ranking: ranking };
 }
 
 function getMovements_(payload) {
   const username = validateUsername_(payload.usuario);
   requireUser_(username);
-  return { movements: buildMovementsPayload_(username, getRowsAsObjects_(getSheet_(SHEETS.MOVEMENTS))) };
-}
-
-function buildMovementsPayload_(username, movements) {
-  return movements
+  const movements = getRowsAsObjects_(getSheet_(SHEETS.MOVEMENTS))
     .filter(function (movement) {
       return normalizeKey_(movement.usuario) === normalizeKey_(username);
     })
@@ -756,6 +701,7 @@ function buildMovementsPayload_(username, movements) {
       };
     })
     .sort(sortByDateDesc_);
+  return { movements: movements };
 }
 
 function adminLogin_(payload) {
@@ -1216,7 +1162,10 @@ function adminCancelMarket_(payload) {
 function adminGetAllBets_(payload) {
   requireAdmin_(payload);
   const markets = getRowsAsObjects_(getSheet_(SHEETS.MARKETS));
-  const marketMap = buildMarketMap_(markets);
+  const marketMap = {};
+  markets.forEach(function (market) {
+    marketMap[String(market.id)] = market;
+  });
   const bets = getRowsAsObjects_(getSheet_(SHEETS.BETS))
     .map(function (bet) {
       return serializeBet_(bet, marketMap);
