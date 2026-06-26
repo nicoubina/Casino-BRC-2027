@@ -273,23 +273,15 @@ async function refreshAll() {
   try {
     setLoading(true);
     const usuario = state.user.usuario;
-    const [userData, markets, bets, balanceRanking, winningsRanking, movements] =
-      await Promise.all([
-        callApi("getUserData", { usuario }),
-        callApi("getMarkets", {}),
-        callApi("getMyBets", { usuario }),
-        callApi("getRankingSaldo", {}),
-        callApi("getRankingGanancias", {}),
-        callApi("getMovements", { usuario }),
-      ]);
+    const dashboard = await callApi("getDashboardData", { usuario });
 
-    state.user = userData.user;
-    state.markets = markets.markets || [];
-    state.bets = bets.bets || [];
-    state.roomCombinations = bets.habitacion_combinadas || [];
-    state.balanceRanking = balanceRanking.ranking || [];
-    state.winningsRanking = winningsRanking.ranking || [];
-    state.movements = movements.movements || [];
+    state.user = dashboard.userData;
+    state.markets = dashboard.markets || [];
+    state.bets = dashboard.bets || [];
+    state.roomCombinations = dashboard.roomCombinations || dashboard.habitacion_combinadas || [];
+    state.balanceRanking = dashboard.balanceRanking || [];
+    state.winningsRanking = dashboard.winningsRanking || [];
+    state.movements = dashboard.movements || [];
     localStorage.setItem(SESSION_KEY, JSON.stringify(state.user));
 
     updateUserHeader();
