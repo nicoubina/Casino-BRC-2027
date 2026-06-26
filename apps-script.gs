@@ -130,6 +130,7 @@ function routeRequest_(payload) {
       getConfig: getPublicConfig_,
       getUserData: getUserData_,
       getMarkets: getMarkets_,
+      getDashboardData: getDashboardData_,
       placeBet: placeBet_,
       placeHabitacionCombinada: placeHabitacionCombinada_,
       cancelBet: cancelBet_,
@@ -171,6 +172,10 @@ function jsonOutput_(payload) {
   return ContentService.createTextOutput(JSON.stringify(payload)).setMimeType(
     ContentService.MimeType.JSON,
   );
+}
+
+function unwrapData_(result) {
+  return result && result.data ? result.data : result || {};
 }
 
 function register_(payload) {
@@ -264,6 +269,28 @@ function getMarkets_() {
     });
 
   return { markets: result };
+}
+
+function getDashboardData_(payload) {
+  payload = payload || {};
+  if (!payload.usuario) throw new Error("Falta el usuario.");
+
+  const userData = unwrapData_(getUserData_(payload));
+  const marketsData = unwrapData_(getMarkets_(payload));
+  const betsData = unwrapData_(getMyBets_(payload));
+  const balanceRankingData = unwrapData_(getBalanceRanking_(payload));
+  const winningsRankingData = unwrapData_(getWinningsRanking_(payload));
+  const movementsData = unwrapData_(getMovements_(payload));
+
+  return {
+    userData: userData.user,
+    markets: marketsData.markets || [],
+    bets: betsData.bets || [],
+    roomCombinations: betsData.habitacion_combinadas || [],
+    balanceRanking: balanceRankingData.ranking || [],
+    winningsRanking: winningsRankingData.ranking || [],
+    movements: movementsData.movements || [],
+  };
 }
 
 function placeBet_(payload) {

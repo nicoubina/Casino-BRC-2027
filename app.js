@@ -268,6 +268,35 @@ function navigateTo(view) {
 }
 
 async function refreshAll() {
+  try {
+    await refreshAllDashboard();
+  } catch (error) {
+    console.warn("getDashboardData falló, usando refresh legacy", error);
+    await refreshAllLegacy();
+  }
+}
+
+async function refreshAllDashboard() {
+  if (!state.user?.usuario) return;
+
+  try {
+    setLoading(true);
+    const dashboard = unwrapDashboardResponse(
+      await callApi("getDashboardData", { usuario: state.user.usuario }),
+    );
+
+    applyDashboardData(dashboard);
+    renderDashboardData();
+
+    if (state.currentView === "admin") {
+      await refreshAdminData();
+    }
+  } finally {
+    setLoading(false);
+  }
+}
+
+async function refreshAllLegacy() {
   if (!state.user?.usuario) return;
 
   try {
@@ -309,6 +338,40 @@ async function refreshAll() {
   } finally {
     setLoading(false);
   }
+}
+
+function unwrapDashboardResponse(response) {
+  return response?.data || response || {};
+}
+
+function applyDashboardData(data) {
+  state.user = data.userData?.user || data.userData || data.user || state.user;
+  state.markets = Array.isArray(data.markets) ? data.markets : data.markets?.markets || [];
+  state.bets = Array.isArray(data.bets) ? data.bets : data.bets?.bets || [];
+  state.roomCombinations =
+    data.roomCombinations ||
+    data.habitacion_combinadas ||
+    data.bets?.habitacion_combinadas ||
+    [];
+  state.balanceRanking = Array.isArray(data.balanceRanking)
+    ? data.balanceRanking
+    : data.balanceRanking?.ranking || [];
+  state.winningsRanking = Array.isArray(data.winningsRanking)
+    ? data.winningsRanking
+    : data.winningsRanking?.ranking || [];
+  state.movements = Array.isArray(data.movements) ? data.movements : data.movements?.movements || [];
+}
+
+function renderDashboardData() {
+  localStorage.setItem(SESSION_KEY, JSON.stringify(state.user));
+
+  updateUserHeader();
+  populateCategoryFilter();
+  renderMarkets();
+  renderBets();
+  renderRankings();
+  renderMovements();
+  populateAdminMarketSelect();
 }
 
 function updateUserHeader() {
