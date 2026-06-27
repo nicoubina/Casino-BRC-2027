@@ -71,7 +71,7 @@ const HEADERS = {
 
 const MARKET_TYPES = ["SI_NO", "NOMBRE", "OVER_UNDER", "HABITACION_COMBINADA"];
 const MARKET_STATES = ["Abierto", "Cerrado", "Resuelto", "Cancelado"];
-const CATEGORY_ORDER = ["Viaje", "Habitaciones", "Wachineadas", "Quebrados", "Minas", "Peleas", "Especiales"];
+const CATEGORY_ORDER = ["Viaje", "Plata", "Habitaciones", "Wachineadas", "Quebrados", "Minas", "Peleas", "Especiales"];
 const ADMIN_SESSION_SECONDS = 21600;
 const DATA_CACHE_SECONDS = 45;
 const DATA_CACHE_KEYS = {
@@ -1463,6 +1463,20 @@ function seedHabitacionesMarkets() {
   return appendMarketDefinitionsIfMissing_(getHabitacionesMarketDefinitions_());
 }
 
+/**
+ * Ejecutar manualmente en planillas existentes para agregar solo Plata.
+ * Evita duplicar mercados por evento y completa opciones faltantes.
+ */
+function seedPlataMarkets() {
+  const spreadsheet = getDatabase_();
+  migrateCasinoSchema_(spreadsheet);
+  ensureSheet_(spreadsheet, SHEETS.MARKETS, HEADERS.Mercados);
+  ensureSheet_(spreadsheet, SHEETS.OPTIONS, HEADERS.Opciones);
+  const result = appendMarketDefinitionsIfMissing_(getPlataMarketDefinitions_());
+  clearDataCaches_();
+  return result;
+}
+
 function seedConfig_() {
   const sheet = getSheet_(SHEETS.CONFIG);
   const existing = getRowsAsObjects_(sheet);
@@ -1562,11 +1576,16 @@ function appendMarketDefinitionsIfMissing_(definitions) {
   const optionsSheet = getSheet_(SHEETS.OPTIONS);
   const markets = getRowsAsObjects_(marketsSheet);
   const options = getRowsAsObjects_(optionsSheet);
-  const existingKeys = new Set(
-    markets.map(function (market) {
-      return normalizeKey_(market.categoria) + "|" + normalizeKey_(market.evento);
-    }),
-  );
+  const marketsByKey = {};
+  markets.forEach(function (market) {
+    marketsByKey[String(market.categoria) + "|" + String(market.evento)] = market;
+  });
+  const optionKeysByMarket = {};
+  options.forEach(function (option) {
+    const marketKey = String(option.mercado_id);
+    if (!optionKeysByMarket[marketKey]) optionKeysByMarket[marketKey] = {};
+    optionKeysByMarket[marketKey][String(option.opcion)] = true;
+  });
 
   const now = new Date();
   const marketRows = [];
@@ -1574,29 +1593,39 @@ function appendMarketDefinitionsIfMissing_(definitions) {
   let marketId = nextId_(markets);
   let optionId = nextId_(options);
   let skippedMarkets = 0;
+  let completedMarkets = 0;
 
   definitions.forEach(function (definition) {
-    const key = normalizeKey_(definition.categoria) + "|" + normalizeKey_(definition.evento);
-    if (existingKeys.has(key)) {
+    const key = String(definition.categoria) + "|" + String(definition.evento);
+    const existingMarket = marketsByKey[key];
+    let targetMarketId = marketId;
+    if (existingMarket) {
       skippedMarkets += 1;
-      return;
+      targetMarketId = existingMarket.id;
+      completedMarkets += 1;
+    } else {
+      marketsByKey[key] = { id: marketId };
+      marketRows.push([
+        marketId,
+        definition.categoria,
+        definition.evento,
+        definition.tipo,
+        "Abierto",
+        now,
+        "",
+        "",
+        false,
+      ]);
+      marketId += 1;
     }
-    existingKeys.add(key);
-    marketRows.push([
-      marketId,
-      definition.categoria,
-      definition.evento,
-      definition.tipo,
-      "Abierto",
-      now,
-      "",
-      "",
-      false,
-    ]);
+
+    const optionKeys = optionKeysByMarket[String(targetMarketId)] || {};
     definition.opciones.forEach(function (option) {
+      if (optionKeys[String(option.opcion)]) return;
+      optionKeys[String(option.opcion)] = true;
       optionRows.push([
         optionId,
-        marketId,
+        targetMarketId,
         option.opcion,
         option.linea === null ? "" : option.linea,
         option.lado || "",
@@ -1604,7 +1633,7 @@ function appendMarketDefinitionsIfMissing_(definitions) {
       ]);
       optionId += 1;
     });
-    marketId += 1;
+    optionKeysByMarket[String(targetMarketId)] = optionKeys;
   });
 
   if (marketRows.length) {
@@ -1617,11 +1646,15 @@ function appendMarketDefinitionsIfMissing_(definitions) {
       .getRange(optionsSheet.getLastRow() + 1, 1, optionRows.length, optionRows[0].length)
       .setValues(optionRows);
   }
+  if (marketRows.length || optionRows.length) {
+    clearDataCaches_();
+  }
 
   return {
     inserted_markets: marketRows.length,
     inserted_options: optionRows.length,
     skipped_markets: skippedMarkets,
+    completed_existing_markets: completedMarkets,
   };
 }
 
@@ -1687,6 +1720,80 @@ function getHabitacionesMarketDefinitions_() {
   ];
 }
 
+function getPlataMarketDefinitions_() {
+  function names(event, entries) {
+    return {
+      categoria: "Plata",
+      evento: event,
+      tipo: "NOMBRE",
+      opciones: entries.map(function (entry) {
+        return { opcion: entry[0], linea: null, lado: "", cuota: entry[1] };
+      }),
+    };
+  }
+
+  return [
+    names("¿Quién gastará más plata en total?", [
+      ["Romi", 6],
+      ["Fran", 6],
+      ["Capu", 6],
+      ["Juanpi", 6],
+      ["Nico", 6],
+      ["Jane", 6],
+    ]),
+    names("¿Quién gastará más en McDonald’s?", [
+      ["Capu", 3.5],
+      ["Romi", 6],
+      ["Fran", 6],
+      ["Juanpi", 6],
+      ["Nico", 6],
+      ["Jane", 6],
+    ]),
+    names("¿Quién gastará más en tragos?", [
+      ["Nico", 4],
+      ["Romi", 4],
+      ["Jane", 5],
+      ["Capu", 6],
+      ["Juanpi", 8],
+      ["Fran", 8],
+    ]),
+    names("¿Quién pondrá plata por daños en la habitación?", [
+      ["Romi", 6],
+      ["Nico", 6],
+      ["Juanpi", 6],
+      ["Fran", 6],
+      ["Jane", 6],
+      ["Facu", 6],
+      ["Nachón", 6],
+      ["Joaco", 6],
+      ["Gonza Boca", 6],
+      ["Gonza R", 6],
+      ["Ivi", 6],
+      ["Dante", 6],
+      ["Rocco", 6],
+      ["Biglia", 6],
+      ["Jesús", 6],
+      ["Perrito Barrios", 15],
+      ["Abelle", 15],
+      ["Pipita", 15],
+      ["Rocío", 50],
+      ["Nico F", 50],
+      ["Mathi Budani", 50],
+      ["Mateo", 50],
+      ["Nachito Pineda", 50],
+    ]),
+    {
+      categoria: "Plata",
+      evento: "¿Facu ratoneará algo en algún momento?",
+      tipo: "SI_NO",
+      opciones: [
+        { opcion: "Sí", linea: null, lado: "", cuota: 1.1 },
+        { opcion: "No", linea: null, lado: "", cuota: 9 },
+      ],
+    },
+  ];
+}
+
 function getInitialMarketDefinitions_() {
   const markets = [];
 
@@ -1736,6 +1843,10 @@ function getInitialMarketDefinitions_() {
       opciones: options,
     });
   }
+
+  getPlataMarketDefinitions_().forEach(function (definition) {
+    markets.push(definition);
+  });
 
   getHabitacionesMarketDefinitions_().forEach(function (definition) {
     markets.push(definition);

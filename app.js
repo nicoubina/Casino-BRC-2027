@@ -8,7 +8,7 @@ const ADMIN_TOKEN_KEY = "casino_brc_admin_token";
 const CACHE_PREFIX = "casino_brc_cache";
 const DASHBOARD_CACHE_TTL_MS = 45 * 1000;
 const PERF_STORAGE_KEY = "casino_brc_perf";
-const CATEGORIES = ["Viaje", "Habitaciones", "Wachineadas", "Quebrados", "Minas", "Peleas", "Especiales"];
+const CATEGORIES = ["Viaje", "Plata", "Habitaciones", "Wachineadas", "Quebrados", "Minas", "Peleas", "Especiales"];
 const ROOM_COUNT_EVENT = "¿Cuántas personas habrá en tu habitación?";
 const ROOM_COMPANIONS = [
   ["Romi", 1.4],
