@@ -1579,6 +1579,36 @@ label {
   backdrop-filter: blur(5px);
 }
 
+.skeleton {
+  min-height: 92px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: linear-gradient(
+    100deg,
+    rgba(255, 255, 255, 0.035) 0%,
+    rgba(255, 255, 255, 0.075) 45%,
+    rgba(255, 255, 255, 0.035) 90%
+  );
+  background-size: 220% 100%;
+  animation: skeleton-pulse 1200ms ease-in-out infinite;
+}
+
+.skeleton-stat {
+  min-height: 86px;
+  border-radius: 14px;
+}
+
+.skeleton-row {
+  min-height: 48px;
+  border-radius: 10px;
+}
+
+@keyframes skeleton-pulse {
+  to {
+    background-position-x: -220%;
+  }
+}
+
 .loader {
   width: 38px;
   height: 38px;

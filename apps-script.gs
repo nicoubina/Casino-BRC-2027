@@ -73,6 +73,12 @@ const MARKET_TYPES = ["SI_NO", "NOMBRE", "OVER_UNDER", "HABITACION_COMBINADA"];
 const MARKET_STATES = ["Abierto", "Cerrado", "Resuelto", "Cancelado"];
 const CATEGORY_ORDER = ["Viaje", "Habitaciones", "Wachineadas", "Quebrados", "Minas", "Peleas", "Especiales"];
 const ADMIN_SESSION_SECONDS = 21600;
+const DATA_CACHE_SECONDS = 45;
+const DATA_CACHE_KEYS = {
+  MARKETS: "casino_markets_v4",
+  BALANCE_RANKING: "casino_balance_ranking_v2",
+  WINNINGS_RANKING: "casino_winnings_ranking_v2",
+};
 const ALLOWED_USERS = ["Capu", "Nico", "Juanpi", "Fran", "Jane"];
 const ROOM_CATEGORY = "Habitaciones";
 const ROOM_COUNT_EVENT = "¿Cuántas personas habrá en tu habitación?";
@@ -102,6 +108,10 @@ const ROOM_COMPANIONS = [
   ["Mateo", 15],
   ["Nachito Pineda", 15],
 ];
+
+let databaseInstance_ = null;
+let sheetInstanceCache_ = {};
+let headerIndexCache_ = {};
 
 function doGet(e) {
   const payload = Object.assign({}, (e && e.parameter) || {});
@@ -178,6 +188,33 @@ function unwrapData_(result) {
   return result && result.data ? result.data : result || {};
 }
 
+function getCachedJson_(key) {
+  try {
+    const raw = CacheService.getScriptCache().get(key);
+    return raw ? JSON.parse(raw) : null;
+  } catch (_error) {
+    return null;
+  }
+}
+
+function putCachedJson_(key, value, seconds) {
+  try {
+    CacheService.getScriptCache().put(key, JSON.stringify(value), seconds);
+  } catch (_error) {
+    // CacheService has strict size limits; skipping cache is safer than failing the request.
+  }
+}
+
+function clearDataCaches_() {
+  try {
+    CacheService.getScriptCache().removeAll(Object.keys(DATA_CACHE_KEYS).map(function (key) {
+      return DATA_CACHE_KEYS[key];
+    }));
+  } catch (_error) {
+    // Cache invalidation should never break a write path.
+  }
+}
+
 function register_(payload) {
   return withScriptLock_(function () {
     const username = canonicalAllowedUsername_(validateUsername_(payload.usuario));
@@ -229,8 +266,18 @@ function getUserData_(payload) {
 }
 
 function getMarkets_() {
-  const markets = getRowsAsObjects_(getSheet_(SHEETS.MARKETS));
-  const options = getRowsAsObjects_(getSheet_(SHEETS.OPTIONS));
+  const cached = getCachedJson_(DATA_CACHE_KEYS.MARKETS);
+  if (cached) return { markets: cached };
+
+  const markets = buildMarketsFromRows_(
+    getRowsAsObjects_(getSheet_(SHEETS.MARKETS)),
+    getRowsAsObjects_(getSheet_(SHEETS.OPTIONS)),
+  );
+  putCachedJson_(DATA_CACHE_KEYS.MARKETS, markets, DATA_CACHE_SECONDS);
+  return { markets: markets };
+}
+
+function buildMarketsFromRows_(markets, options) {
   const optionsByMarket = {};
 
   options.forEach(function (option) {
@@ -247,7 +294,7 @@ function getMarkets_() {
     });
   });
 
-  const result = markets
+  return markets
     .map(function (market) {
       return {
         id: market.id,
@@ -267,30 +314,125 @@ function getMarkets_() {
         categoryPosition_(a.categoria) - categoryPosition_(b.categoria);
       return categoryDifference || number_(a.id) - number_(b.id);
     });
-
-  return { markets: result };
 }
 
 function getDashboardData_(payload) {
   payload = payload || {};
   if (!payload.usuario) throw new Error("Falta el usuario.");
 
-  const userData = unwrapData_(getUserData_(payload));
-  const marketsData = unwrapData_(getMarkets_(payload));
-  const betsData = unwrapData_(getMyBets_(payload));
-  const balanceRankingData = unwrapData_(getBalanceRanking_(payload));
-  const winningsRankingData = unwrapData_(getWinningsRanking_(payload));
-  const movementsData = unwrapData_(getMovements_(payload));
+  const username = canonicalAllowedUsername_(validateUsername_(payload.usuario));
+  const tables = readTables_([
+    SHEETS.USERS,
+    SHEETS.MARKETS,
+    SHEETS.OPTIONS,
+    SHEETS.BETS,
+    SHEETS.ROOM_COMBINATIONS,
+    SHEETS.MOVEMENTS,
+  ]);
+  const users = tables[SHEETS.USERS];
+  const user = findUser_(users, username);
+  if (!user) throw new Error("Usuario no encontrado.");
 
   return {
-    userData: userData.user,
-    markets: marketsData.markets || [],
-    bets: betsData.bets || [],
-    roomCombinations: betsData.habitacion_combinadas || [],
-    balanceRanking: balanceRankingData.ranking || [],
-    winningsRanking: winningsRankingData.ranking || [],
-    movements: movementsData.movements || [],
+    userData: serializeUser_(user),
+    markets: buildMarketsFromRows_(tables[SHEETS.MARKETS], tables[SHEETS.OPTIONS]),
+    bets: buildUserBetsFromRows_(username, tables[SHEETS.BETS], tables[SHEETS.MARKETS]),
+    roomCombinations: buildUserRoomCombinationsFromRows_(
+      username,
+      tables[SHEETS.ROOM_COMBINATIONS],
+    ),
+    balanceRanking: buildBalanceRankingFromRows_(users),
+    winningsRanking: buildWinningsRankingFromRows_(users, tables[SHEETS.MOVEMENTS]),
+    movements: buildUserMovementsFromRows_(username, tables[SHEETS.MOVEMENTS]),
   };
+}
+
+function readTables_(sheetNames) {
+  const result = {};
+  sheetNames.forEach(function (name) {
+    const sheet = name === SHEETS.ROOM_COMBINATIONS
+      ? getRoomCombinationsSheet_()
+      : getSheet_(name);
+    result[name] = getRowsAsObjects_(sheet);
+  });
+  return result;
+}
+
+function buildMarketMapFromRows_(markets) {
+  const marketMap = {};
+  markets.forEach(function (market) {
+    marketMap[String(market.id)] = market;
+  });
+  return marketMap;
+}
+
+function buildUserBetsFromRows_(username, bets, markets) {
+  const marketMap = buildMarketMapFromRows_(markets);
+  return bets
+    .filter(function (bet) {
+      return normalizeKey_(bet.usuario) === normalizeKey_(username);
+    })
+    .map(function (bet) {
+      return serializeBet_(bet, marketMap);
+    })
+    .sort(sortByDateDesc_);
+}
+
+function buildUserRoomCombinationsFromRows_(username, combinations) {
+  return combinations
+    .filter(function (combination) {
+      return normalizeKey_(combination.usuario) === normalizeKey_(username);
+    })
+    .map(serializeRoomCombination_)
+    .sort(sortByDateDesc_);
+}
+
+function buildBalanceRankingFromRows_(users) {
+  return users
+    .map(function (user) {
+      return { usuario: String(user.usuario), saldo: number_(user.saldo) };
+    })
+    .sort(function (a, b) {
+      return b.saldo - a.saldo || a.usuario.localeCompare(b.usuario);
+    });
+}
+
+function buildWinningsRankingFromRows_(users, movements) {
+  const totals = {};
+  users.forEach(function (user) {
+    totals[normalizeKey_(user.usuario)] = {
+      usuario: String(user.usuario),
+      ganancias: 0,
+    };
+  });
+
+  movements.forEach(function (movement) {
+    if (String(movement.tipo) !== "Ganancia") return;
+    const key = normalizeKey_(movement.usuario);
+    if (!totals[key]) {
+      totals[key] = { usuario: String(movement.usuario), ganancias: 0 };
+    }
+    totals[key].ganancias = roundNumber_(
+      totals[key].ganancias + number_(movement.monto),
+    );
+  });
+
+  return Object.keys(totals)
+    .map(function (key) {
+      return totals[key];
+    })
+    .sort(function (a, b) {
+      return b.ganancias - a.ganancias || a.usuario.localeCompare(b.usuario);
+    });
+}
+
+function buildUserMovementsFromRows_(username, movements) {
+  return movements
+    .filter(function (movement) {
+      return normalizeKey_(movement.usuario) === normalizeKey_(username);
+    })
+    .map(serializeMovement_)
+    .sort(sortByDateDesc_);
 }
 
 function placeBet_(payload) {
@@ -388,24 +530,36 @@ function placeBet_(payload) {
       now,
     ]);
 
-    appendMovement_(
+    const bet = {
+      id: betId,
+      usuario: username,
+      mercado_id: marketId,
+      opcion_id: optionId,
+      opcion: option.opcion,
+      tipo_mercado: market.tipo,
+      lado: option.lado || "",
+      linea: option.linea === "" ? "" : option.linea,
+      monto: amount,
+      cuota: number_(option.cuota),
+      estado: "Abierta",
+      pago: 0,
+      fecha: now,
+    };
+    const movement = appendMovement_(
       username,
       "Apuesta",
       -amount,
       "Apuesta en " + market.evento + " · " + option.opcion,
       now,
     );
+    user.saldo = newBalance;
+    clearDataCaches_();
 
     return {
       data: {
-        bet: {
-          id: betId,
-          mercado_id: marketId,
-          opcion_id: optionId,
-          monto: amount,
-          cuota: number_(option.cuota),
-          estado: "Abierta",
-        },
+        user: serializeUser_(user),
+        bet: serializeBet_(bet, buildMarketMapFromRows_(markets)),
+        movement: movement,
         saldo: newBalance,
       },
       message: "Apuesta registrada correctamente.",
@@ -511,25 +665,36 @@ function placeHabitacionCombinada_(payload) {
       now,
     ]);
 
-    appendMovement_(
+    const combination = {
+      id: combinationId,
+      usuario: username,
+      mercado_cantidad_id: market.id,
+      apuesta_cantidad_id: countBetId,
+      cantidad_personas: roomSize,
+      companeros_json: JSON.stringify(companionSelection.names),
+      cuota_cantidad: countOdds,
+      cuota_companeros: companionOdds,
+      cuota_total: totalOdds,
+      monto: amount,
+      estado: "Abierta",
+      pago: 0,
+      fecha: now,
+    };
+    const movement = appendMovement_(
       username,
       "Apuesta",
       -amount,
       ROOM_COMBINATION_EVENT + " · " + roomSize + " personas · " + companionSelection.names.join(", "),
       now,
     );
+    user.saldo = newBalance;
+    clearDataCaches_();
 
     return {
       data: {
-        combinada: {
-          id: combinationId,
-          apuesta_cantidad_id: countBetId,
-          cantidad_personas: roomSize,
-          companeros: companionSelection.names,
-          cuota_total: totalOdds,
-          monto: amount,
-          estado: "Abierta",
-        },
+        user: serializeUser_(user),
+        combinada: serializeRoomCombination_(combination),
+        movement: movement,
         saldo: newBalance,
       },
       message: "Combinada de habitación registrada correctamente.",
@@ -596,40 +761,45 @@ function cancelBet_(payload) {
       .getRange(user._row, headerIndex_(usersSheet, "saldo"))
       .setValue(newBalance);
     betsSheet
-      .getRange(bet._row, headerIndex_(betsSheet, "estado"))
-      .setValue("Devuelta");
-    betsSheet
-      .getRange(bet._row, headerIndex_(betsSheet, "pago"))
-      .setValue(amount);
+      .getRange(bet._row, headerIndex_(betsSheet, "estado"), 1, 2)
+      .setValues([["Devuelta", amount]]);
+    bet.estado = "Devuelta";
+    bet.pago = amount;
 
     linkedCombinations.forEach(function (combination) {
       combinationsSheet
-        .getRange(combination._row, headerIndex_(combinationsSheet, "estado"))
-        .setValue("Devuelta");
-      combinationsSheet
-        .getRange(combination._row, headerIndex_(combinationsSheet, "pago"))
-        .setValue(number_(combination.monto));
+        .getRange(combination._row, headerIndex_(combinationsSheet, "estado"), 1, 2)
+        .setValues([["Devuelta", number_(combination.monto)]]);
+      combination.estado = "Devuelta";
+      combination.pago = number_(combination.monto);
     });
 
-    appendMovement_(
+    const movements = [];
+    movements.push(appendMovement_(
       username,
       "Devolucion",
       amount,
       "Cancelación de apuesta en " + market.evento + " · " + bet.opcion,
       now,
-    );
+    ));
     if (combinationsRefund > 0) {
-      appendMovement_(
+      movements.push(appendMovement_(
         username,
         "Devolucion",
         combinationsRefund,
         "Cancelación de combinada vinculada a " + market.evento,
         now,
-      );
+      ));
     }
+    user.saldo = newBalance;
+    clearDataCaches_();
 
     return {
       data: {
+        user: serializeUser_(user),
+        bet: serializeBet_(bet, buildMarketMapFromRows_(markets)),
+        linked_combinations: linkedCombinations.map(serializeRoomCombination_),
+        movements: movements,
         saldo: newBalance,
         apuesta_id: betId,
       },
@@ -643,91 +813,45 @@ function cancelBet_(payload) {
 function getMyBets_(payload) {
   const username = validateUsername_(payload.usuario);
   requireUser_(username);
-  const markets = getRowsAsObjects_(getSheet_(SHEETS.MARKETS));
-  const marketMap = {};
-  markets.forEach(function (market) {
-    marketMap[String(market.id)] = market;
-  });
-
-  const bets = getRowsAsObjects_(getSheet_(SHEETS.BETS))
-    .filter(function (bet) {
-      return normalizeKey_(bet.usuario) === normalizeKey_(username);
-    })
-    .map(function (bet) {
-      return serializeBet_(bet, marketMap);
-    })
-    .sort(sortByDateDesc_);
-
-  const roomCombinations = getRowsAsObjects_(getRoomCombinationsSheet_())
-    .filter(function (combination) {
-      return normalizeKey_(combination.usuario) === normalizeKey_(username);
-    })
-    .map(serializeRoomCombination_)
-    .sort(sortByDateDesc_);
+  const tables = readTables_([SHEETS.MARKETS, SHEETS.BETS, SHEETS.ROOM_COMBINATIONS]);
+  const bets = buildUserBetsFromRows_(username, tables[SHEETS.BETS], tables[SHEETS.MARKETS]);
+  const roomCombinations = buildUserRoomCombinationsFromRows_(
+    username,
+    tables[SHEETS.ROOM_COMBINATIONS],
+  );
 
   return { bets: bets, habitacion_combinadas: roomCombinations };
 }
 
 function getBalanceRanking_() {
-  const ranking = getRowsAsObjects_(getSheet_(SHEETS.USERS))
-    .map(function (user) {
-      return { usuario: String(user.usuario), saldo: number_(user.saldo) };
-    })
-    .sort(function (a, b) {
-      return b.saldo - a.saldo || a.usuario.localeCompare(b.usuario);
-    });
+  const cached = getCachedJson_(DATA_CACHE_KEYS.BALANCE_RANKING);
+  if (cached) return { ranking: cached };
+  const ranking = buildBalanceRankingFromRows_(
+    getRowsAsObjects_(getSheet_(SHEETS.USERS)),
+  );
+  putCachedJson_(DATA_CACHE_KEYS.BALANCE_RANKING, ranking, DATA_CACHE_SECONDS);
   return { ranking: ranking };
 }
 
 function getWinningsRanking_() {
-  const users = getRowsAsObjects_(getSheet_(SHEETS.USERS));
-  const totals = {};
-  users.forEach(function (user) {
-    totals[normalizeKey_(user.usuario)] = {
-      usuario: String(user.usuario),
-      ganancias: 0,
-    };
-  });
-
-  getRowsAsObjects_(getSheet_(SHEETS.MOVEMENTS)).forEach(function (movement) {
-    if (String(movement.tipo) !== "Ganancia") return;
-    const key = normalizeKey_(movement.usuario);
-    if (!totals[key]) {
-      totals[key] = { usuario: String(movement.usuario), ganancias: 0 };
-    }
-    totals[key].ganancias = roundNumber_(
-      totals[key].ganancias + number_(movement.monto),
-    );
-  });
-
-  const ranking = Object.keys(totals)
-    .map(function (key) {
-      return totals[key];
-    })
-    .sort(function (a, b) {
-      return b.ganancias - a.ganancias || a.usuario.localeCompare(b.usuario);
-    });
+  const cached = getCachedJson_(DATA_CACHE_KEYS.WINNINGS_RANKING);
+  if (cached) return { ranking: cached };
+  const tables = readTables_([SHEETS.USERS, SHEETS.MOVEMENTS]);
+  const ranking = buildWinningsRankingFromRows_(
+    tables[SHEETS.USERS],
+    tables[SHEETS.MOVEMENTS],
+  );
+  putCachedJson_(DATA_CACHE_KEYS.WINNINGS_RANKING, ranking, DATA_CACHE_SECONDS);
   return { ranking: ranking };
 }
 
 function getMovements_(payload) {
   const username = validateUsername_(payload.usuario);
   requireUser_(username);
-  const movements = getRowsAsObjects_(getSheet_(SHEETS.MOVEMENTS))
-    .filter(function (movement) {
-      return normalizeKey_(movement.usuario) === normalizeKey_(username);
-    })
-    .map(function (movement) {
-      return {
-        id: movement.id,
-        usuario: String(movement.usuario),
-        tipo: String(movement.tipo),
-        monto: number_(movement.monto),
-        descripcion: String(movement.descripcion),
-        fecha: toIso_(movement.fecha),
-      };
-    })
-    .sort(sortByDateDesc_);
+  const movements = buildUserMovementsFromRows_(
+    username,
+    getRowsAsObjects_(getSheet_(SHEETS.MOVEMENTS)),
+  );
   return { movements: movements };
 }
 
@@ -769,6 +893,7 @@ function adminCreateMarket_(payload) {
     const markets = getRowsAsObjects_(sheet);
     const id = nextId_(markets);
     sheet.appendRow([id, category, event, type, "Abierto", new Date(), "", "", false]);
+    clearDataCaches_();
     return {
       data: { market: { id: id, categoria: category, evento: event, tipo: type } },
       message: "Mercado creado correctamente.",
@@ -814,6 +939,7 @@ function adminCreateOption_(payload) {
 
     const id = nextId_(options);
     sheet.appendRow([id, marketId, optionName, line, side, odds]);
+    clearDataCaches_();
     return {
       data: { option: { id: id, mercado_id: marketId, opcion: optionName, cuota: odds } },
       message: "Opción agregada correctamente.",
@@ -843,6 +969,7 @@ function adminUpdateOdds_(payload) {
     optionsSheet
       .getRange(option._row, headerIndex_(optionsSheet, "cuota"))
       .setValue(odds);
+    clearDataCaches_();
     return { message: "Cuota actualizada correctamente." };
   });
 }
@@ -869,6 +996,7 @@ function adminUpdateCancelDeadline_(payload) {
         headerIndex_(marketsSheet, "fecha_limite_cancelacion"),
       )
       .setValue(deadline || "");
+    clearDataCaches_();
 
     return {
       data: {
@@ -902,6 +1030,7 @@ function adminUpdateBetDeadline_(payload) {
         headerIndex_(marketsSheet, "fecha_limite_apuesta"),
       )
       .setValue(deadline || "");
+    clearDataCaches_();
 
     return {
       data: {
@@ -933,6 +1062,7 @@ function adminToggleSelfBet_(payload) {
     marketsSheet
       .getRange(market._row, selfBetColumn)
       .setValue(allowSelfBet);
+    clearDataCaches_();
 
     return {
       data: {
@@ -956,6 +1086,7 @@ function adminCloseMarket_(payload) {
     sheet
       .getRange(market._row, headerIndex_(sheet, "estado"))
       .setValue("Cerrado");
+    clearDataCaches_();
     return { message: "Mercado cerrado correctamente." };
   });
 }
@@ -1056,6 +1187,7 @@ function adminResolveMarket_(payload) {
     marketsSheet
       .getRange(market._row, headerIndex_(marketsSheet, "estado"))
       .setValue("Resuelto");
+    clearDataCaches_();
 
     return {
       data: { winners: winners, losers: losers },
@@ -1173,6 +1305,7 @@ function adminCancelMarket_(payload) {
     marketsSheet
       .getRange(market._row, headerIndex_(marketsSheet, "estado"))
       .setValue("Cancelado");
+    clearDataCaches_();
 
     return {
       data: { refunds: refunds, combination_refunds: combinationRefunds },
@@ -1189,10 +1322,7 @@ function adminCancelMarket_(payload) {
 function adminGetAllBets_(payload) {
   requireAdmin_(payload);
   const markets = getRowsAsObjects_(getSheet_(SHEETS.MARKETS));
-  const marketMap = {};
-  markets.forEach(function (market) {
-    marketMap[String(market.id)] = market;
-  });
+  const marketMap = buildMarketMapFromRows_(markets);
   const bets = getRowsAsObjects_(getSheet_(SHEETS.BETS))
     .map(function (bet) {
       return serializeBet_(bet, marketMap);
@@ -1281,6 +1411,7 @@ function adminResolveHabitacionCombinadas_(payload) {
       usersSheet.getRange(1, 1, userValues.length, userValues[0].length).setValues(userValues);
     }
     appendMovementRows_(movementRows);
+    clearDataCaches_();
 
     return {
       data: { winners: winners, losers: losers },
@@ -1310,6 +1441,7 @@ function setupCasino() {
   seedUsers_();
   seedMarketsAndOptions_();
   formatSheets_();
+  clearDataCaches_();
 
   return {
     spreadsheet_url: spreadsheet.getUrl(),
@@ -1744,7 +1876,7 @@ function getInitialMarketDefinitions_() {
       [7, 1.01, 12],
       [8, 1, 20],
     ],
-    Jesús: [
+    "Jesús": [
       [2, 1.6, 2.2],
       [4, 1.1, 6],
       [5, 1.02, 12],
@@ -1833,7 +1965,7 @@ function getInitialMarketDefinitions_() {
       [2, 1.08, 3],
       [3, 1.01, 15],
     ],
-    Jesús: [
+    "Jesús": [
       [1, 1.2, 3],
       [2, 1.02, 12],
       [3, 1, 25],
@@ -1908,7 +2040,7 @@ function getInitialMarketDefinitions_() {
       [3, 1.08, 7],
       [5, 1, 40],
     ],
-    Jesús: [
+    "Jesús": [
       [1, 1.25, 3.5],
       [3, 1.03, 15],
       [5, 1, 75],
@@ -2014,18 +2146,27 @@ function getDatabase_() {
   if (!SPREADSHEET_ID || SPREADSHEET_ID.indexOf("PEGA_AQUI") !== -1) {
     throw new Error("Configurá SPREADSHEET_ID en apps-script.gs.");
   }
-  return SpreadsheetApp.openById(SPREADSHEET_ID);
+  if (!databaseInstance_) {
+    databaseInstance_ = SpreadsheetApp.openById(SPREADSHEET_ID);
+  }
+  return databaseInstance_;
 }
 
 function getRoomCombinationsSheet_() {
-  return ensureSheet_(
+  if (sheetInstanceCache_[SHEETS.ROOM_COMBINATIONS]) {
+    return sheetInstanceCache_[SHEETS.ROOM_COMBINATIONS];
+  }
+  const sheet = ensureSheet_(
     getDatabase_(),
     SHEETS.ROOM_COMBINATIONS,
     HEADERS.HabitacionCombinadas,
   );
+  sheetInstanceCache_[SHEETS.ROOM_COMBINATIONS] = sheet;
+  return sheet;
 }
 
 function getSheet_(name) {
+  if (sheetInstanceCache_[name]) return sheetInstanceCache_[name];
   const sheet = getDatabase_().getSheetByName(name);
   if (!sheet) {
     throw new Error(
@@ -2039,6 +2180,7 @@ function getSheet_(name) {
       "permitir_apuesta_propia",
     ]);
   }
+  sheetInstanceCache_[name] = sheet;
   return sheet;
 }
 
@@ -2140,11 +2282,18 @@ function getRowsAsObjects_(sheet) {
 }
 
 function headerIndex_(sheet, header) {
-  const headers = sheet
-    .getRange(1, 1, 1, sheet.getLastColumn())
-    .getValues()[0]
-    .map(String);
-  const index = headers.indexOf(header);
+  const cacheKey = sheet.getName() + ":" + sheet.getLastColumn();
+  if (!headerIndexCache_[cacheKey]) {
+    const headers = sheet
+      .getRange(1, 1, 1, sheet.getLastColumn())
+      .getValues()[0]
+      .map(String);
+    headerIndexCache_[cacheKey] = indexMap_(headers);
+  }
+  const index = headerIndexCache_[cacheKey][header];
+  if (index === undefined) {
+    throw new Error("Falta la columna " + header + " en " + sheet.getName() + ".");
+  }
   if (index === -1) throw new Error("Falta la columna “" + header + "” en " + sheet.getName() + ".");
   return index + 1;
 }
@@ -2206,6 +2355,7 @@ function createAllowedUser_(usersSheet, users, username) {
 
   usersSheet.appendRow([user.id, user.usuario, user.saldo, user.rol, user.fecha_registro]);
   appendMovement_(username, "Registro", initialBalance, "Saldo inicial", now);
+  clearDataCaches_();
   return user;
 }
 
@@ -2312,21 +2462,29 @@ function sameCompanionSet_(left, right) {
 
 function appendMovement_(username, type, amount, description, date) {
   const sheet = getSheet_(SHEETS.MOVEMENTS);
-  const rows = getRowsAsObjects_(sheet);
+  const movement = {
+    id: nextSheetId_(sheet, "id"),
+    usuario: username,
+    tipo: type,
+    monto: roundNumber_(amount),
+    descripcion: description,
+    fecha: date || new Date(),
+  };
   sheet.appendRow([
-    nextId_(rows),
+    movement.id,
     username,
     type,
-    roundNumber_(amount),
+    movement.monto,
     description,
-    date || new Date(),
+    movement.fecha,
   ]);
+  return serializeMovement_(movement);
 }
 
 function appendMovementRows_(rows) {
   if (!rows.length) return;
   const sheet = getSheet_(SHEETS.MOVEMENTS);
-  let id = nextId_(getRowsAsObjects_(sheet));
+  let id = nextSheetId_(sheet, "id");
   rows.forEach(function (row) {
     row[0] = id;
     id += 1;
@@ -2340,6 +2498,18 @@ function nextId_(rows) {
   return (
     rows.reduce(function (maximum, row) {
       return Math.max(maximum, number_(row.id));
+    }, 0) + 1
+  );
+}
+
+function nextSheetId_(sheet, header) {
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return 1;
+  const idColumn = headerIndex_(sheet, header || "id");
+  const values = sheet.getRange(2, idColumn, lastRow - 1, 1).getValues();
+  return (
+    values.reduce(function (maximum, row) {
+      return Math.max(maximum, number_(row[0]));
     }, 0) + 1
   );
 }
@@ -2461,6 +2631,17 @@ function serializeOption_(option) {
     linea: option.linea === "" ? "" : number_(option.linea),
     lado: String(option.lado || ""),
     cuota: number_(option.cuota),
+  };
+}
+
+function serializeMovement_(movement) {
+  return {
+    id: movement.id,
+    usuario: String(movement.usuario),
+    tipo: String(movement.tipo),
+    monto: number_(movement.monto),
+    descripcion: String(movement.descripcion),
+    fecha: toIso_(movement.fecha),
   };
 }
 

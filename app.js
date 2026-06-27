@@ -5,6 +5,9 @@ const API_URL = "https://script.google.com/macros/s/AKfycby_ZdrJDTGVAT-lB9yLComJ
 
 const SESSION_KEY = "casino_brc_session";
 const ADMIN_TOKEN_KEY = "casino_brc_admin_token";
+const CACHE_PREFIX = "casino_brc_cache";
+const DASHBOARD_CACHE_TTL_MS = 45 * 1000;
+const PERF_STORAGE_KEY = "casino_brc_perf";
 const CATEGORIES = ["Viaje", "Habitaciones", "Wachineadas", "Quebrados", "Minas", "Peleas", "Especiales"];
 const ROOM_COUNT_EVENT = "¿Cuántas personas habrá en tu habitación?";
 const ROOM_COMPANIONS = [
@@ -48,6 +51,7 @@ const state = {
   betStatus: "Todas",
   currentView: "markets",
   loadingCount: 0,
+  requestSequence: 0,
 };
 
 const elements = {};
@@ -61,8 +65,11 @@ function init() {
   const savedSession = readStorage(SESSION_KEY, localStorage);
   if (savedSession && savedSession.usuario) {
     state.user = savedSession;
+    const restoredFromCache = restoreDashboardCache();
     showApp();
-    refreshAll();
+    if (restoredFromCache) renderDashboardData();
+    else renderLoadingPlaceholders();
+    refreshAll({ silent: restoredFromCache });
   } else {
     showAuth();
   }
@@ -138,7 +145,10 @@ function bindEvents() {
   });
 
   elements.refreshButtons.forEach((button) => {
-    button.addEventListener("click", refreshAll);
+    button.addEventListener("click", () => {
+      clearClientCache();
+      refreshAll();
+    });
   });
 
   elements.marketSearch.addEventListener("input", renderMarkets);
@@ -176,6 +186,8 @@ async function handleLogin(event) {
     setLoading(true);
     const data = await callApi("login", { usuario });
     startSession(data.user);
+    clearClientCache();
+    renderLoadingPlaceholders();
     showToast(`Bienvenido, ${data.user.usuario}.`, "success");
     await refreshAll();
   } catch (error) {
@@ -194,6 +206,8 @@ async function handleRegister(event) {
     setLoading(true);
     const data = await callApi("register", { usuario });
     startSession(data.user);
+    clearClientCache();
+    renderLoadingPlaceholders();
     showToast(`Cuenta creada. Recibiste ${formatChips(data.user.saldo)} fichas.`, "success");
     await refreshAll();
   } catch (error) {
@@ -212,6 +226,7 @@ function startSession(user) {
 function logout() {
   localStorage.removeItem(SESSION_KEY);
   sessionStorage.removeItem(ADMIN_TOKEN_KEY);
+  clearClientCache();
   state.user = null;
   state.markets = [];
   state.bets = [];
@@ -267,40 +282,41 @@ function navigateTo(view) {
   }
 }
 
-async function refreshAll() {
+async function refreshAll(options = {}) {
   try {
-    await refreshAllDashboard();
+    await refreshAllDashboard(options);
   } catch (error) {
     console.warn("getDashboardData falló, usando refresh legacy", error);
-    await refreshAllLegacy();
+    await refreshAllLegacy(options);
   }
 }
 
-async function refreshAllDashboard() {
+async function refreshAllDashboard(options = {}) {
   if (!state.user?.usuario) return;
 
   try {
-    setLoading(true);
+    if (!options.silent) setLoading(true);
     const dashboard = unwrapDashboardResponse(
       await callApi("getDashboardData", { usuario: state.user.usuario }),
     );
 
     applyDashboardData(dashboard);
     renderDashboardData();
+    writeDashboardCache();
 
     if (state.currentView === "admin") {
       await refreshAdminData();
     }
   } finally {
-    setLoading(false);
+    if (!options.silent) setLoading(false);
   }
 }
 
-async function refreshAllLegacy() {
+async function refreshAllLegacy(options = {}) {
   if (!state.user?.usuario) return;
 
   try {
-    setLoading(true);
+    if (!options.silent) setLoading(true);
     const usuario = state.user.usuario;
     const [userData, markets, bets, balanceRanking, winningsRanking, movements] =
       await Promise.all([
@@ -328,6 +344,7 @@ async function refreshAllLegacy() {
     renderRankings();
     renderMovements();
     populateAdminMarketSelect();
+    writeDashboardCache();
 
     if (state.currentView === "admin") {
       await refreshAdminData();
@@ -336,7 +353,7 @@ async function refreshAllLegacy() {
     showToast(error.message, "error");
     if (/usuario no encontrado/i.test(error.message)) logout();
   } finally {
-    setLoading(false);
+    if (!options.silent) setLoading(false);
   }
 }
 
@@ -372,6 +389,145 @@ function renderDashboardData() {
   renderRankings();
   renderMovements();
   populateAdminMarketSelect();
+}
+
+function getDashboardCacheKey(username = state.user?.usuario) {
+  return `${CACHE_PREFIX}:dashboard:${normalizeText(username)}`;
+}
+
+function restoreDashboardCache() {
+  if (!state.user?.usuario) return false;
+  const cached = readTtlCache(getDashboardCacheKey());
+  if (!cached) return false;
+  applyDashboardData(cached);
+  return true;
+}
+
+function writeDashboardCache() {
+  if (!state.user?.usuario) return;
+  writeTtlCache(getDashboardCacheKey(), {
+    user: state.user,
+    markets: state.markets,
+    bets: state.bets,
+    roomCombinations: state.roomCombinations,
+    balanceRanking: state.balanceRanking,
+    winningsRanking: state.winningsRanking,
+    movements: state.movements,
+  }, DASHBOARD_CACHE_TTL_MS);
+}
+
+function readTtlCache(key) {
+  try {
+    const raw = sessionStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || Date.now() > Number(parsed.expiresAt || 0)) {
+      sessionStorage.removeItem(key);
+      return null;
+    }
+    return parsed.value;
+  } catch (_error) {
+    sessionStorage.removeItem(key);
+    return null;
+  }
+}
+
+function writeTtlCache(key, value, ttlMs) {
+  try {
+    sessionStorage.setItem(
+      key,
+      JSON.stringify({
+        value,
+        expiresAt: Date.now() + ttlMs,
+      }),
+    );
+  } catch (_error) {
+    clearClientCache();
+  }
+}
+
+function clearClientCache() {
+  Object.keys(sessionStorage).forEach((key) => {
+    if (key.startsWith(CACHE_PREFIX)) sessionStorage.removeItem(key);
+  });
+}
+
+function renderLoadingPlaceholders() {
+  elements.marketsContainer.innerHTML = renderSkeletonList(4);
+  elements.betStatCards.innerHTML = renderSkeletonList(4, "skeleton-stat");
+  elements.betsContainer.innerHTML = renderSkeletonList(3);
+  elements.balanceRanking.innerHTML = renderSkeletonList(4, "skeleton-row");
+  elements.winningsRanking.innerHTML = renderSkeletonList(4, "skeleton-row");
+  elements.movementsContainer.innerHTML = renderSkeletonList(4, "skeleton-row");
+}
+
+function renderSkeletonList(count, extraClass = "") {
+  return Array.from({ length: count }, () => `<div class="skeleton ${extraClass}"></div>`).join("");
+}
+
+function applyMutationData(data = {}) {
+  if (data.user) {
+    state.user = data.user;
+  } else if (data.saldo !== undefined && state.user) {
+    state.user = { ...state.user, saldo: Number(data.saldo) };
+  }
+
+  if (data.bet) {
+    state.bets = upsertById(state.bets, data.bet);
+  }
+
+  const combination = data.combinada || data.roomCombination;
+  if (combination) {
+    state.roomCombinations = upsertById(state.roomCombinations, combination);
+  }
+
+  if (Array.isArray(data.linked_combinations)) {
+    data.linked_combinations.forEach((item) => {
+      state.roomCombinations = upsertById(state.roomCombinations, item);
+    });
+  }
+
+  const movements = [
+    ...(Array.isArray(data.movements) ? data.movements : []),
+    data.movement,
+  ].filter(Boolean);
+  if (movements.length) {
+    state.movements = mergeById(movements, state.movements);
+  }
+
+  updateBalanceRankingFromUser();
+  renderDashboardData();
+  writeDashboardCache();
+}
+
+function upsertById(items, item) {
+  return mergeById([item], items).sort(sortClientDateDesc);
+}
+
+function mergeById(priorityItems, existingItems) {
+  const seen = new Set();
+  return [...priorityItems, ...existingItems].filter((item) => {
+    const key = String(item.id);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function updateBalanceRankingFromUser() {
+  if (!state.user) return;
+  const key = normalizeText(state.user.usuario);
+  const withoutUser = state.balanceRanking.filter(
+    (item) => normalizeText(item.usuario) !== key,
+  );
+  state.balanceRanking = [
+    ...withoutUser,
+    { usuario: state.user.usuario, saldo: Number(state.user.saldo) || 0 },
+  ].sort((a, b) => Number(b.saldo) - Number(a.saldo) || a.usuario.localeCompare(b.usuario));
+}
+
+function sortClientDateDesc(a, b) {
+  return new Date(b.fecha || 0).getTime() - new Date(a.fecha || 0).getTime();
 }
 
 function updateUserHeader() {
@@ -850,6 +1006,7 @@ async function handleMarketClick(event) {
     }
 
     try {
+      setActionBusy(roomCombinationButton, true, "Registrando...");
       setLoading(true);
       const data = await callApi("placeHabitacionCombinada", {
         usuario: state.user.usuario,
@@ -859,11 +1016,17 @@ async function handleMarketClick(event) {
       });
       delete state.roomSelections[betId];
       showToast(data.message || "Combinada registrada.", "success");
-      await refreshAll();
+      if (data.combinada || data.roomCombination) {
+        applyMutationData(data);
+      } else {
+        clearClientCache();
+        await refreshAll({ silent: true });
+      }
     } catch (error) {
       showToast(error.message, "error");
     } finally {
       setLoading(false);
+      setActionBusy(roomCombinationButton, false);
     }
     return;
   }
@@ -902,6 +1065,7 @@ async function handleMarketClick(event) {
   }
 
   try {
+    setActionBusy(betButton, true, "Apostando...");
     setLoading(true);
     const data = await callApi("placeBet", {
       usuario: state.user.usuario,
@@ -911,11 +1075,17 @@ async function handleMarketClick(event) {
     });
     delete state.selectedOptions[marketId];
     showToast(data.message || "Apuesta registrada.", "success");
-    await refreshAll();
+    if (data.bet) {
+      applyMutationData(data);
+    } else {
+      clearClientCache();
+      await refreshAll({ silent: true });
+    }
   } catch (error) {
     showToast(error.message, "error");
   } finally {
     setLoading(false);
+    setActionBusy(betButton, false);
   }
 }
 
@@ -1083,17 +1253,24 @@ async function handleBetClick(event) {
   if (!confirmed) return;
 
   try {
+    setActionBusy(cancelButton, true, "Cancelando...");
     setLoading(true);
     const data = await callApi("cancelBet", {
       usuario: state.user.usuario,
       apuesta_id: cancelButton.dataset.cancelBet,
     });
     showToast(data.message || "Apuesta cancelada y fichas devueltas.", "success");
-    await refreshAll();
+    if (data.bet) {
+      applyMutationData(data);
+    } else {
+      clearClientCache();
+      await refreshAll({ silent: true });
+    }
   } catch (error) {
     showToast(error.message, "error");
   } finally {
     setLoading(false);
+    setActionBusy(cancelButton, false);
   }
 }
 
@@ -1523,8 +1700,10 @@ async function runAdminAction(action, payload, successMessage) {
     syncAdminView();
     return;
   }
+  const activeButton = document.activeElement?.closest?.("button");
 
   try {
+    setActionBusy(activeButton, true, "Procesando...");
     setLoading(true);
     const data = await callApi(action, {
       ...payload,
@@ -1532,7 +1711,8 @@ async function runAdminAction(action, payload, successMessage) {
       admin_token: token,
     });
     showToast(data.message || successMessage, "success");
-    await refreshAll();
+    clearClientCache();
+    await refreshAll({ silent: true });
   } catch (error) {
     if (/sesión de administrador|token/i.test(error.message)) {
       sessionStorage.removeItem(ADMIN_TOKEN_KEY);
@@ -1541,6 +1721,7 @@ async function runAdminAction(action, payload, successMessage) {
     showToast(error.message, "error");
   } finally {
     setLoading(false);
+    setActionBusy(activeButton, false);
   }
 }
 
@@ -1704,6 +1885,7 @@ async function callApi(action, payload = {}) {
     );
   }
 
+  const measurementLabel = startApiMeasure(action);
   let response;
   try {
     response = await fetch(API_URL, {
@@ -1715,10 +1897,12 @@ async function callApi(action, payload = {}) {
       body: JSON.stringify({ action, ...payload }),
     });
   } catch (_error) {
+    endApiMeasure(measurementLabel);
     throw new Error("No se pudo conectar con Apps Script. Revisá la URL y el despliegue.");
   }
 
   if (!response.ok) {
+    endApiMeasure(measurementLabel);
     throw new Error(`La API respondió con estado ${response.status}.`);
   }
 
@@ -1726,22 +1910,60 @@ async function callApi(action, payload = {}) {
   try {
     result = await response.json();
   } catch (_error) {
+    endApiMeasure(measurementLabel);
     throw new Error("La API no devolvió JSON válido. Revisá el despliegue de Apps Script.");
   }
 
   if (!result.success) {
+    endApiMeasure(measurementLabel);
     throw new Error(result.error || "Ocurrió un error inesperado.");
   }
 
+  endApiMeasure(measurementLabel);
   return {
     ...(result.data || {}),
     message: result.message || "",
   };
 }
 
+function startApiMeasure(action) {
+  if (!isPerfEnabled()) return "";
+  const label = `api:${action} #${++state.requestSequence}`;
+  console.time(label);
+  return label;
+}
+
+function endApiMeasure(label) {
+  if (label) console.timeEnd(label);
+}
+
+function isPerfEnabled() {
+  const configured = localStorage.getItem(PERF_STORAGE_KEY);
+  if (configured === "0") return false;
+  if (configured === "1") return true;
+  return ["localhost", "127.0.0.1"].includes(window.location.hostname);
+}
+
 function setLoading(visible) {
   state.loadingCount = Math.max(0, state.loadingCount + (visible ? 1 : -1));
   elements.loadingOverlay.classList.toggle("is-hidden", state.loadingCount === 0);
+}
+
+function setActionBusy(button, busy, label = "Procesando...") {
+  if (!button) return;
+  if (busy) {
+    button.dataset.originalText = button.textContent;
+    button.disabled = true;
+    button.setAttribute("aria-busy", "true");
+    button.textContent = label;
+    return;
+  }
+  if (button.dataset.originalText) {
+    button.textContent = button.dataset.originalText;
+    delete button.dataset.originalText;
+  }
+  button.disabled = false;
+  button.removeAttribute("aria-busy");
 }
 
 function showToast(message, type = "success") {
